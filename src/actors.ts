@@ -24,6 +24,21 @@ type Outgoing = { type: "pong" }
 
 const now = () => new Date().toISOString()
 
+// Plain functions, not methods: the actor runtime requires every method on an actor class to be async
+// (it exposes them all), so these helpers live outside the class.
+function snapshotOf(c: Court): CourtState {
+    return { epoch: c.epoch, scopes: c.scopes, config: c.config, ops: c.ops, authorizations: c.authorizations ?? [] }
+}
+
+/** Reassigns every field so @Persisted saves it and @Emittable streams it. */
+function adoptInto(c: Court, s: CourtState): void {
+    c.epoch = s.epoch
+    c.scopes = s.scopes
+    c.config = s.config
+    c.ops = s.ops
+    c.authorizations = s.authorizations ?? []
+}
+
 export class Court extends Actor<Viewer, Incoming, Outgoing> {
     @Persisted @Emittable epoch = 1
     @Persisted @Emittable scopes: Scope[] = court.DEFAULT_SCOPES.map(s => ({ ...s }))
@@ -31,83 +46,69 @@ export class Court extends Actor<Viewer, Incoming, Outgoing> {
     @Persisted @Emittable ops: Op[] = []
     @Persisted @Emittable authorizations: Authorization[] = []
 
-    private snapshot(): CourtState {
-        return { epoch: this.epoch, scopes: this.scopes, config: this.config, ops: this.ops, authorizations: this.authorizations ?? [] }
-    }
-
-    /** Reassigns every field so @Persisted saves it and @Emittable streams it. */
-    private adopt(s: CourtState): void {
-        this.epoch = s.epoch
-        this.scopes = s.scopes
-        this.config = s.config
-        this.ops = s.ops
-        this.authorizations = s.authorizations ?? []
-    }
-
-    /** A human's authorization for one case. */
     async authorize(a: Omit<Authorization, "epoch" | "createdAt">): Promise<CourtState> {
-        this.adopt(court.authorize(this.snapshot(), a, now()))
-        return this.snapshot()
+        adoptInto(this, court.authorize(snapshotOf(this), a, now()))
+        return snapshotOf(this)
     }
 
     async getState(): Promise<CourtState> {
-        return this.snapshot()
+        return snapshotOf(this)
     }
 
     async checkScope(agent: string, action: ActionName, args: Args): Promise<ScopeDecision> {
-        return court.checkScope(this.snapshot(), agent, action, args)
+        return court.checkScope(snapshotOf(this), agent, action, args)
     }
 
     async recordDenied(input: SubmitInput, reason: string): Promise<Op> {
-        const t = court.recordDenied(this.snapshot(), input, reason, now())
-        this.adopt(t.state)
+        const t = court.recordDenied(snapshotOf(this), input, reason, now())
+        adoptInto(this, t.state)
         return t.op
     }
 
     async submit(input: SubmitInput): Promise<Op> {
-        const t = court.submit(this.snapshot(), input, now())
-        this.adopt(t.state)
+        const t = court.submit(snapshotOf(this), input, now())
+        adoptInto(this, t.state)
         return t.op
     }
 
     async verdict(opId: string, evidence: Evidence, epoch: number): Promise<Op> {
-        const t = court.verdict(this.snapshot(), opId, evidence, epoch, now())
-        this.adopt(t.state)
+        const t = court.verdict(snapshotOf(this), opId, evidence, epoch, now())
+        adoptInto(this, t.state)
         return t.op
     }
 
     /** Explanatory evidence for an operation no longer under review. Never changes its state. */
     async explain(opId: string, evidence: Evidence): Promise<Op> {
-        const t = court.explain(this.snapshot(), opId, evidence)
-        this.adopt(t.state)
+        const t = court.explain(snapshotOf(this), opId, evidence)
+        adoptInto(this, t.state)
         return t.op
     }
 
     async decide(opId: string, approve: boolean, by: string, corrected: Args | null): Promise<Op> {
-        const t = court.decide(this.snapshot(), opId, approve, by, corrected, now())
-        this.adopt(t.state)
+        const t = court.decide(snapshotOf(this), opId, approve, by, corrected, now())
+        adoptInto(this, t.state)
         return t.op
     }
 
     async commit(opId: string): Promise<Op> {
-        const t = court.commit(this.snapshot(), opId, now())
-        this.adopt(t.state)
+        const t = court.commit(snapshotOf(this), opId, now())
+        adoptInto(this, t.state)
         return t.op
     }
 
     async revoke(agent: string): Promise<number> {
-        this.adopt(court.revoke(this.snapshot(), agent))
+        adoptInto(this, court.revoke(snapshotOf(this), agent))
         return this.epoch
     }
 
     async restoreScopes(): Promise<number> {
-        this.adopt(court.restoreScopes(this.snapshot()))
+        adoptInto(this, court.restoreScopes(snapshotOf(this)))
         return this.epoch
     }
 
     async reset(): Promise<CourtState> {
-        this.adopt({ ...court.initialState(), epoch: this.epoch + 1 })
-        return this.snapshot()
+        adoptInto(this, { ...court.initialState(), epoch: this.epoch + 1 })
+        return snapshotOf(this)
     }
 
     async onConnect(socket: ActorSocket<Viewer, Outgoing>): Promise<void> {
