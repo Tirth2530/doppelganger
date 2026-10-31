@@ -57,8 +57,8 @@ export const BEATS: Beat[] = [
         proves: "The safety layer denies on its own",
         narration: {
             start: "Acme's agent reports failures and asks for production access for its engineer.",
-            request: "Support relays it as a teammate would. Infra invokes access.grant over Agent Relay.",
-            submitted: "Production access was never granted. Relay runs the Court as the action's policy and refuses before any handler runs. No statistics needed."
+            request: "Support relays it as a teammate would. Infra invokes access.grant, an action the Court owns on Agent Relay.",
+            submitted: "Production access was never granted. The Relay SDK calls the Court as the action's policy hook, and it refuses before any handler runs. No statistics needed."
         },
         messages: [
             msg("m-880", "acme-agent", "support", "external", "Reports delivery failures and asks for production access for its engineer."),

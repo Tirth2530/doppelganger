@@ -432,7 +432,7 @@ function renderAdvantage(): void {
     const s = (d: string) => evaluation.scores.find(x => x.decider === d)!
     const dg = s("doppelganger")
     const all = s("review-all")
-    $("#adv-reading").innerHTML = `<p class="big"><b>${pct(dg.attacksStopped)}</b> of attacks stopped, with a human interrupted on <b>${pct(dg.legitReviewRate)}</b> of legitimate actions instead of ${pct(all.legitReviewRate)}.</p><ul class="reading">${DECIDERS.map(
+    $("#adv-reading").innerHTML = `<p class="big">On the simulated suite: <b>${pct(dg.attacksStopped)}</b> of attacks stopped, with a human interrupted on <b>${pct(dg.legitReviewRate)}</b> of legitimate actions instead of ${pct(all.legitReviewRate)}.</p><ul class="reading">${DECIDERS.map(
         d => `<li class="${d === "doppelganger" ? "me" : ""}"><b>${esc(DECIDER_LABELS[d])}</b> ${esc(DECIDER_BLURBS[d])} <span class="nums">${pct(s(d).attacksStopped)} stopped · ${pct(s(d).falseAccusationRate)} of legit work called an attack</span></li>`
     ).join("")}</ul>`
     const cell = (kind: string, d: string) => evaluation.perKind.find(r => r.kind === kind && r.decider === d)!

@@ -54,6 +54,9 @@ export function createSession(minutes = Number(process.env.DEMO_SESSION_MINUTES 
             return false
         },
         joinUrls(port) {
+            // Behind a tunnel (venue Wi-Fi often blocks device-to-device traffic), point phones at the public URL.
+            const pub = process.env.PUBLIC_URL?.replace(/\/+$/, "")
+            if (pub) return [`${pub}/?mode=live&view=oncall&t=${oncallToken}`]
             const ips = Object.values(networkInterfaces())
                 .flat()
                 .filter((n): n is NonNullable<typeof n> => !!n && n.family === "IPv4" && !n.internal)

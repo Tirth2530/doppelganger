@@ -8,12 +8,15 @@ AI agents now delegate to each other and operate production systems. The new fai
 
 Doppelgänger traces how every privileged request formed across agents, tests the suspicious ones against the human's original intent with counterfactual twins, and enforces the result. Humans see only what the evidence can't clear.
 
+**Same request. Same agents. Different outcome.** Every privileged request runs twice, on a sandbox copy of the system: once the way most agent stacks work today (the tool just runs it), and once through the Court. Both receive the identical request: same id, arguments and triggering message.
+
 ```
 bun install
-bun test              # 57 tests
+bun test              # 66 tests
 bun run verify        # model-checks the Court and five broken Courts
 bun run eval          # Doppelgänger vs four alternatives
-bun run build:web && bun run start     # dashboard on :3000, simulation mode, no keys
+bun run build:web && bun run start     # dashboard on :3000, simulation in the browser, no keys
+bun run demo                           # simulation on the server: phones can join, no keys
 ```
 
 ## How it works
@@ -34,7 +37,7 @@ The evidence layer never denies. It can only clear an action, or hand it to a hu
 
 ## Built on the sponsors, structurally
 
-**Agent Relay.** The Court joins the workspace as an agent and *owns* the privileged actions. Per the SDK, an action registered from an agent client is relay-routed: agents invoke it over Relay, Relay delivers it to the Court, and the action's `policy` runs first. So the Court's scope check *is* Relay's policy hook. An out-of-scope call never reaches a handler, Relay emits its own `action.denied`, and the docket records that event. Provenance rides on the wire in `metadata.inputs`; lineage is rebuilt from `message.created`, and trust comes from the roster, never from a message. (`src/relay-wiring.ts`, typechecked against `@agent-relay/sdk` 15 source.)
+**Agent Relay.** The Court joins the workspace as an agent and *owns* the privileged actions. Per the SDK, an action registered from an agent client is relay-routed: agents invoke it over Relay, Relay delivers it to the Court agent, and the SDK runs the action's `policy` before its handler. So the Court's scope check *is* the action's policy hook. An out-of-scope call never reaches a handler: the SDK completes the invocation with an error and emits its own `action.denied`, and the docket records that event. Provenance rides on the wire in `metadata.inputs`; lineage is rebuilt from `message.created`, and trust comes from the roster, never from a message. (`src/relay-wiring.ts`, typechecked against `@agent-relay/sdk` 15 source.)
 
 **Durable Actors.** `Court`, `Lineage` and `AgentLog` actors (`src/actors.ts`, typechecked against `durable-actors` 0.14.6 source). The Court has no `@Interleave`, deliberately: the model checker's *Unserialized verdict* mutant is the Court with interleaving allowed, and in four steps a revocation slips between "check the epoch" and "write the approval". The actor runtime's one-call-at-a-time execution is a safety property here, not a convenience. `@Emittable` state streams to the dashboard in real time.
 
@@ -42,7 +45,7 @@ The evidence layer never denies. It can only clear an action, or hand it to a hu
 
 **Model-checked Court.** 48,588 states, 730,026 transitions, all six invariants hold (executes only under current authority; revocation stops reviews in flight; laundered requests are always reviewed; only legal transitions; config is exactly what was executed; each operation executes once). Five broken Courts are each caught with their shortest counterexample.
 
-**Against the alternatives** (`bun run eval`, 7 scenario classes × 200 instances, ground truth stated in `src/eval.ts`):
+**Against the alternatives, on a simulated suite** (`bun run eval`: 7 scenario classes × 200 instances, ground truth stated in `src/eval.ts`; it measures the decision rules, not a particular model):
 
 | approach | attacks stopped | legit actions sent to a human | legit actions called attacks |
 |---|---|---|---|
@@ -65,7 +68,9 @@ export RELAY_WORKSPACE_KEY=…  OPENAI_API_KEY=…  OPENAI_MODEL=…
 bun run build:web && bun run live           # open http://localhost:3000/?mode=live
 ```
 
-OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the actions; the dashboard streams the run. Two pieces are the team's: `src/payloads.ts` (what the outside party sends) and `createSampler` in `src/trial.ts` (the replay engine; `src/rewrite.ts` and `runAgent` are ready for it). Without a sampler, reviews fail closed to a human.
+OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the actions; the dashboard streams the run. In live mode a judge can **write their own message as the outside party** and watch the real agents and the Court respond, and can **scan a QR code to become the on-call engineer**: held actions arrive on their phone, and their tap decides them on the big screen.
+
+**Phone controls are protected.** A short-lived demo session with least-privilege roles (`src/session.ts`): the presenter's token is handed only to a page loaded on the laptop itself; the phone's on-call token can approve, deny and revoke, never start attacks or reset; the server checks the role on every command. Whatever a token allows, the Court re-checks authority on every human decision and fences every commit with the epoch, so a stale approval can never override a revocation. Behind venue Wi-Fi, run a tunnel and set `PUBLIC_URL` so the QR code points at it. Two pieces are the team's: `src/payloads.ts` (what the outside party sends) and `createSampler` in `src/trial.ts` (the replay engine; `src/rewrite.ts` and `runAgent` are ready for it). Without a sampler, reviews fail closed to a human.
 
 ## Honest limits
 
@@ -85,6 +90,8 @@ OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the a
 | `src/baselines.ts`, `src/eval.ts` | The alternatives and the scored suite |
 | `src/actors.ts`, `src/actor-clients.ts` | Durable Actors |
 | `src/relay-wiring.ts`, `src/live-run.ts` | Agent Relay wiring and the live runner |
-| `src/sim.ts`, `web/src` | The six demo cases and the dashboard |
+| `src/unprotected.ts` | The same system without Doppelgänger, on a sandbox: the comparison |
+| `src/session.ts`, `src/server.ts` | Demo session roles, SSE, authenticated commands |
+| `src/sim.ts`, `src/demo-server.ts`, `web/src` | The six demo cases, server-side simulation, and the dashboard |
 
 All code in this repository was written during Haunted Hacks on 31 October 2026.
