@@ -494,7 +494,8 @@ async function post(query: string, body?: unknown): Promise<void> {
     try {
         const r = await fetch(`command?${query}`, {
             method: "POST",
-            headers: { "content-type": "application/json", ...(store.token ? { "x-demo-session": store.token } : {}) },
+            // A fresh id per command: the server executes each id once, so a captured request can't be replayed.
+            headers: { "content-type": "application/json", "x-command-id": crypto.randomUUID(), ...(store.token ? { "x-demo-session": store.token } : {}) },
             body: JSON.stringify(body ?? {})
         })
         if (!r.ok) {
@@ -527,12 +528,26 @@ async function joinPresenterSession(): Promise<void> {
         store.joinUrl = s.joinUrls[0] ?? null
         const panel = $("#join")
         panel.hidden = false
-        $("#join-url").textContent = store.joinUrl ?? "Connect the laptop to a network so phones can reach it."
-        $("#join-expiry").textContent = `Session valid until ${new Date(s.expiresAt).toLocaleTimeString()}.`
-        if (store.joinUrl) drawQr(store.joinUrl)
+        showJoin(s.joinUrls, s.expiresAt)
     } catch {
         /* not served by the live runner */
     }
+}
+
+function showJoin(urls: string[], expiresAt?: number): void {
+    store.joinUrl = urls[0] ?? null
+    $("#join-url").textContent = store.joinUrl ?? "Connect the laptop to a network so phones can reach it."
+    if (expiresAt) $("#join-expiry").textContent = `Session valid until ${new Date(expiresAt).toLocaleTimeString()}.`
+    $("#join-qr").innerHTML = ""
+    if (store.joinUrl) drawQr(store.joinUrl)
+}
+
+/** Issues a new on-call link: every phone holding the old one is locked out at once. */
+async function rotateJoin(): Promise<void> {
+    const r = await fetch("session/rotate", { method: "POST", headers: { "x-demo-session": store.token ?? "" } }).catch(() => null)
+    if (!r?.ok) return
+    showJoin(((await r.json()) as { joinUrls: string[] }).joinUrls)
+    $("#narration").textContent = "New on-call link issued. Phones with the old link are locked out."
 }
 
 function drawQr(url: string): void {
@@ -660,6 +675,7 @@ function boot(): void {
         store.remote = true
         document.documentElement.classList.add("live")
         $("#say-send").addEventListener("click", () => void sendAsAcme())
+        $("#join-rotate").addEventListener("click", () => void rotateJoin())
         void joinPresenterSession()
         const src = new EventSource("events")
         src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)

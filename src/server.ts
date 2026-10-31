@@ -1,16 +1,18 @@
 // Serves the dashboard and streams the live runner's events.
-//   bun run start            dashboard only (simulation mode, no keys needed)
+//   bun run start            dashboard only (simulation in the browser, no keys)
+//   bun run demo             simulation on this laptop; phones can join
 //   bun run live             live runner + this server; open /?mode=live
 //
-// Commands are authorized per role (src/session.ts). The presenter token is
-// only ever handed to a page loaded from this laptop.
+// Commands are authenticated, authorized per role, single-use and rate-limited
+// (src/session.ts). The presenter token is only ever handed to a page loaded on
+// this laptop itself, never through a tunnel.
 
 import { readFileSync } from "node:fs"
 
 import { hub, parseCommand } from "./live.ts"
-import { createSession, isLoopback, type Session } from "./session.ts"
+import { createSession, isLocalRequest, type Session } from "./session.ts"
 
-const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } })
+const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
 
 export function startServer(port = Number(process.env.PORT ?? 3000), session: Session = createSession()) {
     const server = Bun.serve({
@@ -18,7 +20,7 @@ export function startServer(port = Number(process.env.PORT ?? 3000), session: Se
         idleTimeout: 0,
         async fetch(req, srv) {
             const url = new URL(req.url)
-            const from = srv.requestIP(req)?.address
+            const local = isLocalRequest(req, srv.requestIP(req)?.address)
 
             if (url.pathname === "/events") {
                 let unsubscribe = () => {}
@@ -34,25 +36,30 @@ export function startServer(port = Number(process.env.PORT ?? 3000), session: Se
                 return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" } })
             }
 
-            // The presenter's page, on this laptop only, learns its token and the on-call link to show as a QR code.
             if (url.pathname === "/session") {
-                if (!isLoopback(from)) return json({ error: "the presenter session is only available on this laptop" }, 403)
+                if (!local) return json({ error: "the presenter session is only available on the presenter's laptop" }, 403)
                 return json({ token: session.presenterToken, expiresAt: session.expiresAt, joinUrls: session.joinUrls(server.port) })
+            }
+
+            // Lock out every phone holding the current on-call link, and issue a new one.
+            if (url.pathname === "/session/rotate" && req.method === "POST") {
+                if (!local || session.roleOf(req.headers.get("x-demo-session")) !== "presenter") return json({ error: "only the presenter, on the presenter's laptop, can rotate the on-call link" }, 403)
+                session.rotateOncall()
+                return json({ joinUrls: session.joinUrls(server.port) })
             }
 
             if (url.pathname === "/command" && req.method === "POST") {
                 const body = await req.json().catch(() => ({}))
                 const command = parseCommand(url, body)
                 if (!command) return json({ error: "bad command" }, 400)
-                const role = session.roleOf(req.headers.get("x-demo-session"))
-                if (!role) return json({ error: "missing or expired demo session" }, 401)
-                if (!session.allows(role, command)) return json({ error: `the ${role} role cannot ${command.kind}` }, 403)
+                const admission = session.admit(req.headers.get("x-demo-session"), req.headers.get("x-command-id"), command)
+                if (!admission.ok) return json({ error: admission.error }, admission.status)
                 return (await hub.command(command)) ? json({ ok: true }) : json({ error: "no live runner attached" }, 409)
             }
 
             if (url.pathname === "/" || url.pathname === "/index.html") {
                 try {
-                    return new Response(readFileSync("web/dist/index.html"), { headers: { "content-type": "text/html; charset=utf-8" } })
+                    return new Response(readFileSync("web/dist/index.html"), { headers: { "content-type": "text/html; charset=utf-8", "referrer-policy": "no-referrer" } })
                 } catch {
                     return new Response("Run `bun run build:web` first.", { status: 503 })
                 }
