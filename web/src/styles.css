@@ -1624,3 +1624,28 @@ table.grid.real th {
     border-color: var(--held);
     box-shadow: 0 0 0 1px var(--held);
 }
+
+.why-off {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--ink-3);
+}
+.btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.oc-mode {
+    margin: 0 0 10px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font: 600 13px var(--font-mono);
+}
+.oc-mode.sim {
+    color: var(--held);
+    border: 1px solid color-mix(in srgb, var(--held) 55%, var(--line));
+    background: color-mix(in srgb, var(--held) 10%, transparent);
+}
+.oc-mode.live {
+    color: var(--good);
+    border: 1px solid color-mix(in srgb, var(--good) 55%, var(--line));
+}

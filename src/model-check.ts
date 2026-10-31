@@ -94,7 +94,16 @@ export const IMPLEMENTATIONS: Impl[] = [
         title: "No fence at commit",
         description: "Applies an approved operation without checking that authorization is unchanged since the approval.",
         mutant: true,
-        commit: (s, opId, now) => court.commit({ ...s, ops: s.ops.map(o => (o.opId === opId ? { ...o, epochAtApproval: s.epoch } : o)) }, opId, now)
+        commit: (s, opId, now) => court.commit({ ...s, ops: s.ops.map(o => (o.opId === opId ? { ...o, epochAtApproval: s.epoch } : o)) }, opId, now, { caseAuthorization: false })
+    },
+    {
+        ...REAL,
+        id: "scope-only-approval",
+        title: "Approval checks scope only",
+        description: "A human approval and the commit check the agent's general scope, not the case's authorization: \"Approve as requested\" sends logs to Acme, and an operation held before a revoke executes under authority restored afterwards.",
+        mutant: true,
+        decide: (s, opId, a, by, c, now) => court.decide(s, opId, a, by, c, now, { caseAuthorization: false }),
+        commit: (s, opId, now) => court.commit(s, opId, now, { caseAuthorization: false })
     },
     {
         ...REAL,
@@ -132,6 +141,7 @@ export const INVARIANTS = [
     { id: "laundering", name: "Laundered requests are always reviewed", statement: "An operation whose history reaches outside content is approved only by evidence or a human, never on submission." },
     { id: "transitions", name: "Only legal state transitions", statement: "Every change follows the lifecycle; HELD leaves only by a human decision; EXECUTED and DENIED never change." },
     { id: "config", name: "Config is exactly what was executed", statement: "The protected config always equals the default with each executed operation applied in order, and nothing else." },
+    { id: "authorized", name: "Every execution is covered by its case's authorization", statement: "An operation reaches EXECUTED only if an authorization for its case, granted under the current epoch and not expired, covers its agent, operation and exact final arguments. General scope is not enough." },
     { id: "once", name: "Each operation executes at most once", statement: "No operation is applied to the protected config twice, however many commits arrive." }
 ] as const
 
@@ -193,6 +203,7 @@ export const SCENARIOS: Scenario[] = [
     { id: "all-interleaved", title: "All three operations, every interleaving", ops: ["A", "B", "C"], limits: { submits: 1, verdicts: 1, humans: 1, commits: 1, revokes: 1, restores: 1 } },
     { id: "laundered-retries", title: "The laundered request with duplicates and retries", ops: ["A"], limits: { submits: 2, verdicts: 2, humans: 2, commits: 2, revokes: 1, restores: 1 } },
     { id: "revocation-race", title: "Two requests racing two revocations", ops: ["A", "B"], limits: { submits: 1, verdicts: 2, humans: 1, commits: 2, revokes: 2, restores: 2 } },
+    { id: "stale-hold", title: "A held request, a revoke and a restore, then a human approval", ops: ["A"], limits: { submits: 1, verdicts: 1, humans: 1, commits: 1, revokes: 1, restores: 1 } },
     { id: "instant-hold", title: "An unauthorized laundered destination, held at once, racing verdicts, humans and revocations", ops: ["D", "B"], limits: { submits: 2, verdicts: 2, humans: 2, commits: 2, revokes: 1, restores: 1 } }
 ]
 
@@ -347,6 +358,7 @@ export function apply(sys: Sys, act: Act, impl: Impl): Step {
             if (ghost.execCount[op.opId] > 1) broken.add("once")
             const scope = court.checkScope(c, op.requestedBy, op.action, op.args)
             if (!scope.allowed || ghost.revokes !== ghost.atApproval[op.opId]) broken.add("authority")
+            if (!court.matchAuthorization(c, op.lineage.caseIds, op.requestedBy, op.action, op.args, NOW).ok) broken.add("authorized")
         }
     }
     let expected = court.DEFAULT_CONFIG

@@ -90,7 +90,8 @@ export function unauthorizedValue(state: CourtState, agent: string, action: Acti
 /** Records a human's authorization for a case, stamped with the current epoch. Idempotent on id. */
 export function authorize(s: CourtState, a: Omit<Authorization, "epoch" | "createdAt">, now: string): CourtState {
     const list = s.authorizations ?? []
-    if (list.some(x => x.id === a.id)) return s
+    // Idempotent within an epoch. After a revoke, granting the same case again is a fresh authorization.
+    if (list.some(x => x.id === a.id && x.epoch === s.epoch)) return s
     return { ...s, authorizations: [...list, { ...a, epoch: s.epoch, createdAt: now }] }
 }
 
@@ -262,7 +263,22 @@ export function verdict(s: CourtState, opId: string, evidence: Evidence, epoch: 
 }
 
 /** HELD → APPROVED (optionally with corrected arguments, re-checked against scope) | DENIED. */
-export function decide(s: CourtState, opId: string, approve: boolean, by: string, corrected: Args | null, now: string): Transition {
+/** Court behaviour switches that exist only so the model checker can show what breaks without them. */
+export interface CourtChecks {
+    /** Re-check the case authorization at a human approval and at commit (default true). */
+    caseAuthorization?: boolean
+}
+
+/**
+ * A human decision on a HELD operation. Approving re-checks, against the FINAL arguments (after any
+ * correction): the agent's scope, and that an active authorization for the operation's case covers them
+ * (current epoch, not expired, every constraint). An approval that the case authorization does not cover is
+ * refused and the operation stays HELD: a reviewer can correct it into what was authorized, or deny it, but
+ * cannot widen the authorization by approving. A revoke (any epoch change) ends the case authorization, so an
+ * operation held before a revoke cannot be approved under authority restored afterwards without a fresh
+ * authorization for its case.
+ */
+export function decide(s: CourtState, opId: string, approve: boolean, by: string, corrected: Args | null, now: string, checks: CourtChecks = {}): Transition {
     const op = find(s, opId)
     if (!op) throw new Error(`unknown operation ${opId}`)
     if (op.state !== "HELD") return { state: s, op, changed: false }
@@ -276,19 +292,34 @@ export function decide(s: CourtState, opId: string, approve: boolean, by: string
         const next = { ...stamp(op, "DENIED", `approval rejected: ${scope.reason}`, now), decidedBy: by }
         return { state: replace(s, next), op: next, changed: true }
     }
+    if (checks.caseAuthorization !== false) {
+        const m = matchAuthorization(s, op.lineage.caseIds, op.requestedBy, op.action, args, now)
+        if (!m.ok) {
+            const next = stamp(op, "HELD", `approval refused: ${m.reason}. A reviewer can approve only what the case authorization covers; correct it or deny it.`, now)
+            return { state: replace(s, next), op: next, changed: true }
+        }
+    }
     const note = corrected ? `approved by ${by} with corrected arguments` : `approved by ${by}`
     const next = { ...stamp({ ...op, args }, "APPROVED", note, now), decidedBy: by, epochAtApproval: s.epoch }
     return { state: replace(s, next), op: next, changed: true }
 }
 
 /** APPROVED → EXECUTED: applies the operation to the protected config, unless authorization changed since approval. */
-export function commit(s: CourtState, opId: string, now: string): Transition {
+/** The only write to the protected config. Fenced by the epoch AND re-checked against the case authorization (expiry, constraints). */
+export function commit(s: CourtState, opId: string, now: string, checks: CourtChecks = {}): Transition {
     const op = find(s, opId)
     if (!op) throw new Error(`unknown operation ${opId}`)
     if (op.state !== "APPROVED") return { state: s, op, changed: false }
     if (op.epochAtApproval !== s.epoch) {
         const next = stamp(op, "DENIED", `stale approval: approved at epoch ${op.epochAtApproval}; authorization is now epoch ${s.epoch}`, now)
         return { state: replace(s, next), op: next, changed: true }
+    }
+    if (checks.caseAuthorization !== false) {
+        const m = matchAuthorization(s, op.lineage.caseIds, op.requestedBy, op.action, op.args, now)
+        if (!m.ok) {
+            const next = stamp(op, "DENIED", `not executed: ${m.reason}`, now)
+            return { state: replace(s, next), op: next, changed: true }
+        }
     }
     let config = s.config
     if (op.action === "logging.configure") config = { ...config, logLevel: op.args.level, logSink: op.args.sink }

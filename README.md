@@ -13,7 +13,7 @@ Doppelgänger traces how every privileged request formed across agents, tests th
 ```
 bun install
 bun test              # 66 tests
-bun run verify        # model-checks the Court and five broken Courts
+bun run verify        # model-checks the Court and six broken Courts
 bun run eval          # Doppelgänger vs four alternatives
 bun run build:web && bun run start     # dashboard on :3000, simulation in the browser, no keys
 bun run demo                           # simulation on the server: phones can join, no keys
@@ -47,7 +47,7 @@ The evidence layer never denies. It can only clear an action, or hand it to a hu
 
 ## Results
 
-**Model-checked Court.** 66,242 states, 918,539 transitions, all six invariants hold (executes only under current authority; revocation stops reviews in flight; laundered requests are always reviewed; only legal transitions; config is exactly what was executed; each operation executes once). Five broken Courts are each caught with their shortest counterexample.
+**Model-checked Court.** 25,608 states, 392,444 transitions, all seven invariants hold (executes only under current authority; every execution is covered by its case's authorization, not just the agent's general scope; revocation stops reviews in flight; laundered requests are always reviewed; only legal transitions; config is exactly what was executed; each operation executes once). Six broken Courts are each caught with their shortest counterexample, including *Approval checks scope only*, where "Approve as requested" would send logs to Acme and a request held before a revoke would execute under restored authority.
 
 **Against the alternatives, on a simulated suite** (`bun run eval`: 7 scenario classes × 200 instances, ground truth stated in `src/eval.ts`; it measures the decision rules, not a particular model):
 
@@ -80,7 +80,7 @@ OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the a
 
 **Provenance is verified, not taken from agents.** Each case is one workflow: the on-call engineer's task (a human message on Relay) and the outside message, read together by Support in one recorded step. When a privileged action arrives, the Court's wiring rebuilds its history from the AgentLog, not from what messages claim: an internal message counts as produced from what the step that *sent* it read, and the caller must have a recorded step that read the trigger and made exactly this call. Anything that does not check out is unverified and held. An in-scope action is approved automatically only if a human request is in its history and no outside content is; "no attack found" is not treated as intent. Provenance is stamped by the harness (the process that runs the agents), never by a model. Operation ids are derived from the request itself (caller, action, arguments, trigger), so a redelivered or retried Relay invocation maps to the same operation and never runs twice; the SDK does not give the handler an invocation id to use instead. Relay's own action events (`action.invoked`, `action.completed`, `action.denied`) are shown on the dashboard as observed; `action.completed` means the Court's handler returned, which may be HELD, and only the Court's EXECUTED state means the change happened. Rewrites must keep every URL, path, address, key and number of the original (one retry); otherwise the replay fails and the action is held.
 
-**Human authorization records.** A clean history is not authorization. When the on-call engineer opens a case, the Court records her authorization for it (`authorize()`): who granted it, the task, which agent may act, which operation, constraints on each argument (webhooks only, level up to debug, internal sinks only), an expiry, and the epoch it was granted under. An in-scope action executes automatically only if exactly one case is in its history, opened by a human message, and an active authorization for that case covers that agent, operation and those exact arguments. A revocation ends every outstanding authorization; restoring authority does not revive them. The case id comes only from human messages (our own on-call client); an outsider claiming a case is ignored.
+**Human authorization records.** A clean history is not authorization. When the on-call engineer opens a case, the Court records her authorization for it (`authorize()`): who granted it, the task, which agent may act, which operation, constraints on each argument (webhooks only, level up to debug, internal sinks only), an expiry, and the epoch it was granted under. A human reviewer can approve only what the case authorization covers: the Court re-checks it against the final (corrected) arguments at the approval and again at the commit (expiry, constraints, epoch), so "Approve as requested" cannot send logs to an unauthorized destination, and a request held before a revoke cannot be approved under authority restored afterwards without a fresh authorization for its case. The dashboard and phone disable an approval the Court would refuse and say why. An in-scope action executes automatically only if exactly one case is in its history, opened by a human message, and an active authorization for that case covers that agent, operation and those exact arguments. A revocation ends every outstanding authorization; restoring authority does not revive them. The case id comes only from human messages (our own on-call client); an outsider claiming a case is ignored.
 
 **Slack review notifications** (`src/slack.ts`, optional). The first time the Court holds an operation, one message goes to a Slack incoming webhook (`SLACK_WEBHOOK_URL`): action, agent, requested destination, origin chain, reason, case id, and a *Review action* link. The link carries no credential: it opens the on-call review page, which works only on a device already signed in with the on-call QR code; every decision then goes through the authenticated server and the Court. Timeouts, retries with backoff, Retry-After, one message per operation; Slack being down changes nothing about enforcement. In the simulation every message is marked [SIMULATION].
 
@@ -111,7 +111,7 @@ OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the a
 | `src/replay-logic.ts` | Lineage, value tracing, evidence |
 | `src/replay.ts`, `src/trial.ts` | The replay engine (the counterfactual sampler) and where it plugs into the experiment |
 | `src/agents.ts`, `src/rewrite.ts`, `src/scenario.ts` | Model calls (timeouts, retries, usage), the two rewrites, the agents |
-| `src/model-check.ts` | Exhaustive model checker, six invariants, five mutants |
+| `src/model-check.ts` | Exhaustive model checker, seven invariants, six mutants |
 | `src/baselines.ts`, `src/eval.ts` | The alternatives and the scored suite |
 | `src/actors.ts`, `src/actor-clients.ts` | Durable Actors |
 | `src/relay-wiring.ts`, `src/live-run.ts` | Agent Relay wiring and the live runner |

@@ -1,5 +1,5 @@
 import { DECIDER_BLURBS, DECIDER_LABELS, DECIDERS } from "../../src/baselines.ts"
-import { INTERNAL_DEFAULT_SINK } from "../../src/court-logic.ts"
+import { INTERNAL_DEFAULT_SINK, matchAuthorization } from "../../src/court-logic.ts"
 import type { EvalReport } from "../../src/eval.ts"
 import type { ExperimentView, FeedMessage, UiEvent } from "../../src/events.ts"
 import { ASSUMPTIONS, verifyCertificate } from "../../src/experiment.ts"
@@ -311,6 +311,24 @@ function renderLedger(): void {
 
 // ---- the Court ------------------------------------------------------------------
 
+/**
+ * The decision buttons for a held operation. A reviewer can approve only what the case authorization
+ * covers (the Court enforces this; the buttons just don't offer what it would refuse), so each approval
+ * is checked against the Court's own rule and disabled, with the reason, when it is not covered.
+ */
+function approvalButtons(op: Op, small: boolean): string {
+    const s = store.court
+    const now = new Date().toISOString()
+    const cover = (args: Args) => (s ? matchAuthorization(s, op.lineage.caseIds, op.requestedBy, op.action, args, now) : { ok: false as const, reason: "no Court state" })
+    const fixed = cover({ ...op.args, sink: INTERNAL_DEFAULT_SINK })
+    const asIs = cover(op.args)
+    const cls = small ? "btn small" : "btn"
+    const id = esc(op.opId)
+    const btn = (label: string, kind: string, attrs: string, ok: boolean) => `<button class="${cls} ${kind}" data-decide="${id}" ${attrs}${ok ? "" : " disabled"}>${label}</button>`
+    const why = [!asIs.ok ? `“Approve as requested” is off: ${asIs.reason}.` : "", !fixed.ok ? `Approving with the internal sink is off too: ${fixed.reason}. Deny it, or the presenter re-authorizes the case.` : ""].filter(Boolean).join(" ")
+    return `<div class="${small ? "decide" : "oc-buttons"}">${btn("Approve with our internal sink", "good", 'data-approve="1" data-fix="1"', fixed.ok)}${btn("Approve as requested", "", 'data-approve="1"', asIs.ok)}${btn("Deny", "danger", 'data-approve="0"', true)}</div>${why ? `<p class="why-off">${esc(why)}</p>` : ""}`
+}
+
 function renderRelayTrace(): void {
     const el = document.getElementById("relay-trace")
     if (!el) return
@@ -334,7 +352,7 @@ function renderDocket(): void {
                   const t = STATE_LABEL[op.state]
                   const actions =
                       op.state === "HELD"
-                          ? `<div class="decide"><button class="btn small good" data-decide="${esc(op.opId)}" data-approve="1" data-fix="1">Approve with the internal sink</button><button class="btn small" data-decide="${esc(op.opId)}" data-approve="1">Approve as is</button><button class="btn small danger" data-decide="${esc(op.opId)}" data-approve="0">Deny</button></div>`
+                          ? approvalButtons(op, true)
                           : ""
                   return `<li class="op tone-${t.tone}${op.opId === store.focus ? " focus" : ""}" data-focus="${esc(op.opId)}"><div class="op-top"><code>${esc(op.action)}</code><span>${esc(t.label)}</span></div><p>${esc(op.reason || "submitted")}</p>${op.caseId ? `<small class="meta">case ${esc(op.caseId)}${store.slack[op.opId] ? ` · Slack review: ${esc(store.slack[op.opId])}` : ""}</small>` : ""}${actions}</li>`
               })
@@ -411,7 +429,8 @@ function renderOncall(): void {
     const scope = s.scopes.find(sc => sc.agent === "infra")
     const held = s.ops.filter(o => o.state === "HELD")
     const recent = s.ops.filter(o => o.state !== "HELD").slice(-4).reverse()
-    el.innerHTML = `<h1>You're the on-call engineer</h1>
+    const badge = !store.announced ? "" : store.mode === "live" ? `<p class="oc-mode live">LIVE · real agents</p>` : `<p class="oc-mode sim">SIMULATED agents: a rehearsal, not a live event</p>`
+    el.innerHTML = `${badge}<h1>You're the on-call engineer</h1>
         <p class="lead">Infra's privileged actions that Doppelgänger couldn't clear arrive here. Your tap decides them on the big screen.</p>
         <div class="oc-auth"><span>Authorization epoch <b>${s.epoch}</b></span><span>${scope ? `Infra may change ${esc(scope.service)} logging, up to ${esc(scope.maxLevel)}` : `<span class="revoked">Infra's authority is revoked</span>`}</span>
         <div class="oc-row"><button class="btn danger" data-oc="revoke">Revoke Infra</button></div><p class="note">Restoring authority is the presenter's call.</p></div>
@@ -422,7 +441,7 @@ function renderOncall(): void {
                       .map(
                           op => `<article class="oc-card${op.opId === store.focus ? " focus" : ""}"><code>${esc(op.action)}</code>${op.caseId ? ` <small>case ${esc(op.caseId)}</small>` : ""}<dl>${Object.entries(op.args)
                               .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
-                              .join("")}</dl><p>${esc(op.reason)}</p><div class="oc-buttons"><button class="btn good" data-decide="${esc(op.opId)}" data-approve="1" data-fix="1">Approve with our internal sink</button><button class="btn" data-decide="${esc(op.opId)}" data-approve="1">Approve as requested</button><button class="btn danger" data-decide="${esc(op.opId)}" data-approve="0">Deny</button></div></article>`
+                              .join("")}</dl><p>${esc(op.reason)}</p>${approvalButtons(op, false)}</article>`
                       )
                       .join("")
                 : `<p class="empty">Nothing needs you right now.</p>`

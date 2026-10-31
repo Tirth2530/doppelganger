@@ -27,8 +27,10 @@ const heldInput = (opId: string): SubmitInput => ({
     args: { service: "webhooks", level: "debug", sink: COLLECTOR },
     requestedBy: "infra",
     triggerRelayId: "m1",
-    lineage: { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1 }
+    lineage: { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "h1", "m0"], hops: 1, humanRelayIds: ["h1"], unverified: [], caseIds: ["c1"] }
 })
+/** The only correction the case authorization covers: our internal sink. */
+const FIX = { sink: "internal://logs/webhooks" }
 const inconclusive: Evidence = { verdict: "inconclusive", diffs: [], realCall: { name: "logging_configure", args: {} }, counterfactualCall: null, originRelayId: "m0", valueProvenance: [], rounds: 4, note: "", certificate: null }
 
 /** A Court with one operation HELD for a human. */
@@ -36,6 +38,7 @@ function heldCourt() {
     const ports = memoryPorts()
     const c = ports.court
     const setup = async () => {
+        await c.authorize(court.caseAuthorization("c1", "on-call engineer", new Date().toISOString()))
         const op = await c.submit(heldInput("op1"))
         await c.verdict("op1", inconclusive, op.epochAtSubmit)
         expect(c.state.ops[0].state).toBe("HELD")
@@ -49,6 +52,61 @@ function permutations<T>(xs: T[]): T[][] {
     return xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map(p => [x, ...p]))
 }
 
+describe("a reviewer cannot widen the case authorization", () => {
+    const setup = async () => {
+        const h = heldCourt()
+        await h.setup()
+        return h.c
+    }
+    test("external sink approved as requested: refused, stays held, nothing executes", async () => {
+        const c = await setup()
+        const op = await c.decide("op1", true, "phone", null)
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/approval refused: sink .* outside what on-call engineer authorized/)
+        await c.commit("op1")
+        expect(c.state.config.logSink).not.toBe(COLLECTOR)
+    })
+    test("a correction that is still outside the authorization: refused", async () => {
+        const c = await setup()
+        expect((await c.decide("op1", true, "phone", { sink: "https://other.example/x" })).state).toBe("HELD")
+        expect((await c.decide("op1", true, "phone", { level: "trace", sink: "internal://logs/webhooks" })).state).not.toBe("APPROVED")
+    })
+    test("a correction into the authorization: approved and executed", async () => {
+        const c = await setup()
+        expect((await c.decide("op1", true, "phone", FIX)).state).toBe("APPROVED")
+        expect((await c.commit("op1")).state).toBe("EXECUTED")
+        expect(c.state.config).toMatchObject({ logLevel: "debug", logSink: "internal://logs/webhooks" })
+    })
+    test("held before a revoke, approved after restore: refused (the case authorization ended with the revoke)", async () => {
+        const c = await setup()
+        await c.revoke("infra")
+        await c.restoreScopes()
+        const op = await c.decide("op1", true, "phone", FIX)
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/epoch/)
+        // a fresh authorization for the case, granted under the current epoch, is what allows it
+        await c.authorize(court.caseAuthorization("c1", "on-call engineer", new Date().toISOString()))
+        expect((await c.decide("op1", true, "phone", FIX)).state).toBe("APPROVED")
+    })
+    test("the authorization expires between approval and commit: not executed", async () => {
+        const c = await setup()
+        await c.decide("op1", true, "phone", FIX)
+        // jump past the expiry at the commit boundary (pure Court function, explicit time)
+        const later = new Date(Date.now() + 31 * 60_000).toISOString()
+        const t = court.commit(c.state, "op1", later)
+        expect(t.op.state).toBe("DENIED")
+        expect(t.op.reason).toMatch(/expired/)
+        expect(t.state.config.logLevel).not.toBe("debug")
+    })
+    test("an expired authorization: approval refused", () => {
+        const T0 = new Date().toISOString()
+        let s = court.authorize(court.initialState(), court.caseAuthorization("c1", "oncall", T0), T0)
+        s = court.submit(s, heldInput("op1"), T0).state
+        const later = new Date(Date.now() + 31 * 60_000).toISOString()
+        expect(court.decide(s, "op1", true, "phone", FIX, later).op.state).toBe("HELD")
+    })
+})
+
 describe("concurrent humans and revocation (every ordering)", () => {
     type Step = "approve" | "deny" | "revoke" | "commit" | "approve2"
     const run = async (order: Step[]) => {
@@ -57,7 +115,7 @@ describe("concurrent humans and revocation (every ordering)", () => {
         const log: Step[] = []
         for (const s of order) {
             log.push(s)
-            if (s === "approve" || s === "approve2") await c.decide("op1", true, s, null)
+            if (s === "approve" || s === "approve2") await c.decide("op1", true, s, FIX)
             if (s === "deny") await c.decide("op1", false, "deny", null)
             if (s === "revoke") await c.revoke("infra")
             if (s === "commit") await c.commit("op1")
@@ -79,14 +137,15 @@ describe("concurrent humans and revocation (every ordering)", () => {
             if (executed) expect(before("approve", "revoke") && first === "approve").toBe(true)
             if (before("revoke", "approve")) expect(executed).toBe(false)
             // The config changed exactly when it executed.
-            expect(state.config.logSink === COLLECTOR).toBe(executed)
+            expect(state.config.logLevel === "debug").toBe(executed)
+            expect(state.config.logSink).not.toBe(COLLECTOR)
         })
     }
 
     test("two phones approve at once: the change applies once", async () => {
         const { c, setup } = heldCourt()
         await setup()
-        await Promise.all([c.decide("op1", true, "phone A", null), c.decide("op1", true, "phone B", null)])
+        await Promise.all([c.decide("op1", true, "phone A", FIX), c.decide("op1", true, "phone B", FIX)])
         await Promise.all([c.commit("op1"), c.commit("op1"), c.commit("op1")])
         expect(c.state.ops[0].history.filter(h => h.state === "EXECUTED")).toHaveLength(1)
         expect(c.state.ops[0].decidedBy).toBe("phone A")
@@ -95,7 +154,7 @@ describe("concurrent humans and revocation (every ordering)", () => {
     test("a stale approval cannot override a revocation, even after authority is restored", async () => {
         const { c, setup } = heldCourt()
         await setup()
-        await c.decide("op1", true, "phone", null)
+        await c.decide("op1", true, "phone", FIX)
         await c.revoke("infra")
         await c.restoreScopes()
         await c.commit("op1")
