@@ -4,6 +4,7 @@
 import { armSummary, attribute, certify, pointTwin, type ExperimentState } from "./experiment.ts"
 import { influenceThreshold } from "./stats.ts"
 import type { ActionName, ArgAttribution, Arm, ArmSummary, Args, Certificate, CourtState, LedgerPoint, StopReason, ToolCall, Trust } from "./types.ts"
+import type { ShadowState } from "./unprotected.ts"
 
 export interface FeedMessage {
     relayId: string
@@ -69,3 +70,5 @@ export type UiEvent =
     | { type: "experiment"; view: ExperimentView }
     | { type: "narrate"; text: string }
     | { type: "busy"; busy: boolean }
+    /** The same request, run on the unprotected copy of the system. */
+    | { type: "shadow"; state: ShadowState; opId: string | null }

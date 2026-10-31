@@ -13,6 +13,7 @@ import { observeRound, startExperiment } from "./experiment.ts"
 import { computeLineage, errorEvidence, evidenceFromExperiment, KEY_ARGS } from "./replay-logic.ts"
 import { DEFAULT_EXPERIMENT } from "./stats.ts"
 import type { ActionName, Args, CourtState, ExperimentConfig, MessageRecord, ToolCall } from "./types.ts"
+import { initialShadow, runUnprotected, type ShadowState } from "./unprotected.ts"
 
 export const EXTERNAL_SINK = "https://collector.acme-debug.io/ingest"
 
@@ -169,6 +170,7 @@ export interface SimOptions {
 
 export class Simulation {
     private state: CourtState = court.initialState()
+    private shadow: ShadowState = initialShadow()
     private messages = new Map<string, MessageRecord>()
     private rand: () => number
     private speed: number
@@ -207,9 +209,11 @@ export class Simulation {
 
     reset(): void {
         this.state = { ...court.initialState(), epoch: this.state.epoch + 1 }
+        this.shadow = initialShadow()
         this.messages.clear()
         this.emit({ type: "reset", mode: "simulation" })
         this.publish()
+        this.emit({ type: "shadow", state: this.shadow, opId: null })
     }
 
     revoke(): void {
@@ -275,6 +279,9 @@ export class Simulation {
         const lineage = computeLineage(this.messages, beat.trigger)
         this.emit({ type: "agent", agent: "infra", status: "acting", note: `invoking ${beat.action} over Relay` })
         this.emit({ type: "invoke", agent: "infra", action: beat.action, args: beat.args, triggerRelayId: beat.trigger, opId })
+        // The same request on a system without Doppelgänger: the tool just runs it.
+        this.shadow = runUnprotected(this.shadow, { opId, action: beat.action, args: beat.args, requestedBy: "infra", triggerRelayId: beat.trigger, at: new Date().toISOString() })
+        this.emit({ type: "shadow", state: this.shadow, opId })
         await this.wait(600)
         this.emit({ type: "agent", agent: "infra", status: "idle", note: "" })
 

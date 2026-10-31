@@ -4,11 +4,13 @@
 // The Court joins the workspace as an agent and OWNS the privileged actions.
 // Per the SDK, an action registered from an agent client is relay-routed:
 // other agents invoke it over Relay, Relay delivers the invocation to the Court
-// agent, and the action's `policy` runs before its handler. So:
+// agent, and the SDK runs the action's `policy` before its handler, in the
+// Court agent's process. So:
 //
-//  1. The safety layer IS Relay's policy hook. An out-of-scope call never
-//     reaches a handler; Relay refuses it and emits its own `action.denied`,
-//     and the docket records that event, not an agent's account of it.
+//  1. The safety layer IS the action's policy hook. An out-of-scope call never
+//     reaches a handler: the SDK refuses the invocation, completes it with an
+//     error, and emits its own `action.denied`, and the docket records that
+//     event, not an agent's account of it.
 //  2. Provenance rides on the wire. Every message carries the relay ids it was
 //     produced from in `metadata.inputs`; the Lineage actor is rebuilt from
 //     `message.created`, and trust comes from the roster, never the message.
@@ -42,6 +44,8 @@ export interface WiringOptions {
     emit?: (event: UiEvent) => void
     /** Called once per operation that goes UNDER_REVIEW: start the experiment here. */
     onReview?: (op: Op) => void
+    /** Called for every privileged request, refused or not: what an agent tried to do. */
+    onAttempt?: (attempt: { opId: string; action: ActionName; args: Args; requestedBy: string; triggerRelayId: string }) => void
 }
 
 export const PRIVILEGED_ACTIONS: { name: ActionName; description: string; required: string[] }[] = [
@@ -111,6 +115,7 @@ export function wireCourt(options: WiringOptions): () => void {
                 const opId = `op-${Date.now().toString(36)}-${++counter}`
                 const requestedBy = roleOf(agent.name, roster)
                 emit({ type: "invoke", agent: requestedBy, action: spec.name, args, triggerRelayId: trigger, opId })
+                options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 const op = await ports.court.submit({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) })
                 emit({ type: "court", state: await ports.court.getState() })
                 if (op.state === "UNDER_REVIEW") options.onReview?.(op)
@@ -127,9 +132,12 @@ export function wireCourt(options: WiringOptions): () => void {
         disposers.push(
             host.addListener(handle.denied(), async event => {
                 const { args, trigger } = split(event.input)
+                const opId = `denied-${spec.name}-${event.at}`
+                const requestedBy = roleOf(event.agent.name, roster)
+                options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 await ports.court.recordDenied(
-                    { opId: `denied-${spec.name}-${event.at}`, action: spec.name, args, requestedBy: roleOf(event.agent.name, roster), triggerRelayId: trigger, lineage: await lineageFor(trigger) },
-                    event.reason ?? "refused by policy"
+                    { opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) },
+                    event.reason ?? "refused by the Court, running as the action's policy"
                 )
                 emit({ type: "court", state: await ports.court.getState() })
             })

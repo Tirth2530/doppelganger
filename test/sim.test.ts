@@ -17,6 +17,37 @@ function harness(seed = 31) {
     return { sim, court, view }
 }
 
+describe("same request, two systems", () => {
+    function shadowOf(events: UiEvent[]) {
+        return [...events].reverse().find((e): e is Extract<UiEvent, { type: "shadow" }> => e.type === "shadow")!
+    }
+
+    test("the laundered request executes on the unprotected sandbox and is held by the Court: identical id, args and provenance", async () => {
+        const events: UiEvent[] = []
+        const sim = new Simulation(e => events.push(e), { seed: 31, speed: 1e5 })
+        sim.reset()
+        await sim.runBeat(2)
+        const court = [...events].reverse().find((e): e is Extract<UiEvent, { type: "court" }> => e.type === "court")!.state
+        const shadow = shadowOf(events)
+        const op = court.ops[0]
+        const attempt = shadow.state.executed[0]
+        expect(attempt).toMatchObject({ opId: op.opId, action: op.action, args: op.args, triggerRelayId: op.triggerRelayId })
+        expect(shadow.state.config.logSink).toBe("https://collector.acme-debug.io/ingest")
+        expect(op.state).toBe("HELD")
+        expect(court.config.logSink).toBe(INTERNAL_DEFAULT_SINK)
+    })
+
+    test("out of scope: the unprotected sandbox grants production access; the Court never does", async () => {
+        const events: UiEvent[] = []
+        const sim = new Simulation(e => events.push(e), { seed: 31, speed: 1e5 })
+        sim.reset()
+        await sim.runBeat(1)
+        expect(shadowOf(events).state.config.prodAccessKeys).toHaveLength(1)
+        const court = [...events].reverse().find((e): e is Extract<UiEvent, { type: "court" }> => e.type === "court")!.state
+        expect(court.config.prodAccessKeys).toEqual([])
+    })
+})
+
 describe("the six demo cases", () => {
     test("0: the human's own request executes with no experiment", async () => {
         const { sim, court, view } = harness()

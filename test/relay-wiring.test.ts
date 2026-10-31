@@ -60,6 +60,22 @@ describe("the Court on Agent Relay", () => {
         expect(await ports.lineage.get(id)).toMatchObject({ trust: "external", inputs: [], producedBy: null })
     })
 
+    test("every request reaches the comparison hook with exactly what the Court received, refused or not", async () => {
+        const relay = new FakeRelay()
+        const ports = memoryPorts()
+        const attempts: { opId: string; args: Record<string, string>; triggerRelayId: string }[] = []
+        const host = relay as unknown as Parameters<typeof wireCourt>[0]["host"]
+        wireCourt({ host, stream: host, ports, roster: ROSTER, onAttempt: a => attempts.push(a) })
+        const ext = await relay.deliver("acme-agent", "support-7f2c", "logs")
+        const relayed = await relay.deliver("support-7f2c", "infra-7f2c", "debug to the collector", { inputs: [ext] })
+        await relay.invoke("logging.configure", actionInput({ service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" }, relayed), infra)
+        await relay.invoke("access.grant", actionInput({ service: "webhooks", environment: "production", public_key: "k" }, relayed), infra)
+        const [held, denied] = ports.court.state.ops
+        expect(attempts).toHaveLength(2)
+        expect(attempts[0]).toMatchObject({ opId: held.opId, args: held.args, triggerRelayId: held.triggerRelayId })
+        expect(attempts[1]).toMatchObject({ opId: denied.opId, args: denied.args, triggerRelayId: relayed })
+    })
+
     test("disposing unregisters the actions", async () => {
         const { relay, dispose } = harness()
         dispose()

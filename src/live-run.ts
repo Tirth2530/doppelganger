@@ -21,6 +21,7 @@ import { HUMAN_TASK, INFRA, SUPPORT, TOOL_TO_ACTION, type AgentSpec } from "./sc
 import { startServer } from "./server.ts"
 import { createSampler, runTrial } from "./trial.ts"
 import type { Op } from "./types.ts"
+import { initialShadow, runUnprotected, type Attempt } from "./unprotected.ts"
 
 type Agent = RelayAgentClient & AgentRelayAgent
 
@@ -56,7 +57,14 @@ async function main() {
         hub.emit({ type: "court", state: await ports.court.getState() })
     }
 
-    wireCourt({ host: agent.court, stream: relay, ports, roster, emit: hub.emit, onReview: op => void review(op) })
+    // The same requests, on a copy of the system without Doppelgänger: the tool just runs them.
+    let shadow = initialShadow()
+    const attempt = (a: Omit<Attempt, "at">) => {
+        shadow = runUnprotected(shadow, { ...a, at: new Date().toISOString() })
+        hub.emit({ type: "shadow", state: shadow, opId: a.opId })
+    }
+
+    wireCourt({ host: agent.court, stream: relay, ports, roster, emit: hub.emit, onReview: op => void review(op), onAttempt: attempt })
 
     // Each agent answers the messages addressed to it, through the model, and logs the exact context.
     const think = async (spec: AgentSpec, me: Agent, message: RelayMessageEvent<"message.created">["message"]) => {
@@ -98,6 +106,12 @@ async function main() {
                     await agent["acme-agent"].sendMessage({ to: name("support"), text })
                 }
                 break
+            case "say":
+                // A judge's own message, sent as the outside party. The real agents take it from there.
+                hub.emit({ type: "narrate", text: "A judge's message is on its way to Support, as Acme's agent." })
+                await agent.oncall.sendMessage({ to: name("support"), text: HUMAN_TASK })
+                await agent["acme-agent"].sendMessage({ to: name("support"), text: c.text })
+                break
             case "revoke":
                 await court.revoke("infra")
                 break
@@ -106,7 +120,9 @@ async function main() {
                 break
             case "reset":
                 await court.reset()
+                shadow = initialShadow()
                 hub.emit({ type: "reset", mode: "live" })
+                hub.emit({ type: "shadow", state: shadow, opId: null })
                 break
             case "decide": {
                 const op = await court.decide(c.opId, c.approve, "on-call engineer", c.corrected)
@@ -117,10 +133,13 @@ async function main() {
         hub.emit({ type: "court", state: await court.getState() })
     })
 
-    const server = startServer()
+    const { server, session } = startServer()
     hub.emit({ type: "reset", mode: "live" })
     hub.emit({ type: "court", state: await ports.court.getState() })
-    console.log(`Live run ${runId}: http://localhost:${server.port}/?mode=live`)
+    hub.emit({ type: "shadow", state: shadow, opId: null })
+    console.log(`Live run ${runId}: open http://localhost:${server.port}/?mode=live on this laptop`)
+    console.log(`On-call phone link (valid until ${new Date(session.expiresAt).toLocaleTimeString()}):`)
+    for (const url of session.joinUrls(server.port)) console.log(`  ${url}`)
 }
 
 main().catch(error => {

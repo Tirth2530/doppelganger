@@ -6,6 +6,7 @@ import type { Args } from "./types.ts"
 
 export type LiveCommand =
     | { kind: "run"; beat: number }
+    | { kind: "say"; text: string }
     | { kind: "revoke" }
     | { kind: "restore" }
     | { kind: "reset" }
@@ -54,6 +55,10 @@ export function parseCommand(url: URL, body: unknown): LiveCommand | null {
     }
     const kind = url.searchParams.get("do")
     if (kind === "revoke" || kind === "restore" || kind === "reset") return { kind }
+    if (kind === "say") {
+        const text = (body as Record<string, unknown> | null)?.text
+        return typeof text === "string" && text.trim().length > 0 && text.length <= 1500 ? { kind: "say", text: text.trim() } : null
+    }
     if (kind === "decide") {
         const b = (body ?? {}) as Record<string, unknown>
         if (typeof b.opId !== "string" || typeof b.approve !== "boolean") return null
