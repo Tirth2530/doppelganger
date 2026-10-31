@@ -21,6 +21,7 @@ export const DEFAULT_EXPERIMENT: ExperimentConfig = {
     conf: 0.95,
     tauBase: 0.8,
     tauRobust: 0.7,
+    qRobust: 0.95,
     minRounds: 4,
     maxRounds: 20,
     futility: true
@@ -37,7 +38,9 @@ export function validateConfig(c: ExperimentConfig): void {
         c.tauBase > 0 &&
         c.tauBase <= 1 &&
         c.tauRobust > 0 &&
-        c.tauRobust <= 1 &&
+        c.tauRobust < 1 &&
+        c.qRobust > c.tauRobust &&
+        c.qRobust < 1 &&
         Number.isInteger(c.minRounds) &&
         Number.isInteger(c.maxRounds) &&
         c.minRounds >= 1 &&
@@ -124,9 +127,55 @@ export function clopperUpper(successes: number, n: number, confidence = 0.95): n
     return bisect(p => binomialCdf(successes, n, p), 1 - confidence, false)
 }
 
+// ---- the robust e-process ------------------------------------------------------
+//
+// "Robust" auto-approves, so ITS error is the safety-relevant one: calling an
+// action robust when, with the instruction neutralized, the twin reproduces it
+// at a rate p ≤ tauRobust. A fixed-sample bound (Clopper–Pearson) checked after
+// every round does not control that error under optional stopping. This test
+// does: the likelihood ratio of Bernoulli(qRobust) against Bernoulli(tauRobust),
+//     R_n = (q/τ)^s · ((1−q)/(1−τ))^f      (s successes, f failures),
+// has E[R_{n+1} | past] = p·q/τ + (1−p)(1−q)/(1−τ) ≤ 1 whenever p ≤ τ < q, so it is
+// a nonnegative supermartingale under every such null. By Ville's inequality,
+// P(R ever reaches 1/α) ≤ α, whatever the stopping rule (futility, budget, the
+// influence test stopping first, or someone re-checking after every round).
+
+export function robustEValue(config: Pick<ExperimentConfig, "qRobust" | "tauRobust">, successes: number, failures: number): number {
+    const { qRobust: q, tauRobust: t } = config
+    return Math.exp(successes * Math.log(q / t) + failures * Math.log((1 - q) / (1 - t)))
+}
+
 /** Could the treatment arm still clear the robust bar if every remaining twin reproduced? */
 export function robustReachable(treatmentReproduced: number, n: number, remaining: number, config: ExperimentConfig): boolean {
-    return clopperLower(treatmentReproduced + remaining, n + remaining, config.conf) >= config.tauRobust
+    return robustEValue(config, treatmentReproduced + remaining, n - treatmentReproduced) >= influenceThreshold(config.alpha) - 1e-12
+}
+
+/** Exact P(declared robust within maxRounds) when the treatment twin reproduces at rate p (ignores the baseline gate, so it is an upper bound). */
+export function robustOperating(config: ExperimentConfig, p: number): number {
+    const thr = influenceThreshold(config.alpha)
+    let alive = new Map<number, number>([[0, 1]]) // successes → probability, after n rounds, still running
+    let robust = 0
+    for (let n = 1; n <= config.maxRounds; n++) {
+        const next = new Map<number, number>()
+        for (const [s, mass] of alive) {
+            for (const [ds, pr] of [[1, p], [0, 1 - p]] as const) {
+                const m = mass * pr
+                if (m <= 0) continue
+                const s2 = s + ds
+                if (n >= config.minRounds && robustEValue(config, s2, n - s2) >= thr - 1e-12) robust += m
+                else next.set(s2, (next.get(s2) ?? 0) + m)
+            }
+        }
+        alive = next
+    }
+    return robust
+}
+
+/** The worst false-"robust" probability over every null p ≤ tauRobust (exact, by dynamic programming). */
+export function worstFalseRobust(config: ExperimentConfig, grid = 50): number {
+    let worst = 0
+    for (let i = 0; i <= grid; i++) worst = Math.max(worst, robustOperating(config, (config.tauRobust * i) / grid))
+    return worst
 }
 
 // ---- operating characteristic ---------------------------------------------

@@ -11,6 +11,8 @@ export interface CourtPort {
     recordDenied(input: SubmitInput, reason: string): Promise<Op>
     submit(input: SubmitInput): Promise<Op>
     verdict(opId: string, evidence: Evidence, epoch: number): Promise<Op>
+    /** Attach explanatory evidence to an op that is not under review. Never changes state. */
+    explain(opId: string, evidence: Evidence): Promise<Op>
     decide(opId: string, approve: boolean, by: string, corrected: Args | null): Promise<Op>
     commit(opId: string): Promise<Op>
     revoke(agent: string): Promise<number>

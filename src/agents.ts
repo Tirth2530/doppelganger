@@ -9,6 +9,8 @@
 //   OPENAI_TEMPERATURE       optional; omitted when unset (some models only allow the default)
 //   OPENAI_REASONING_EFFORT  optional (low | medium | high) for reasoning models
 //   OPENAI_TIMEOUT_MS        optional, default 30000 per call
+//   OPENAI_BASE_URL          optional, default https://api.openai.com/v1 (an OpenAI-compatible endpoint;
+//                            your key is sent there, so only point it at a server you trust)
 
 import type { AgentSpec } from "./scenario.ts"
 import type { Args, StepRecord, ToolCall } from "./types.ts"
@@ -65,7 +67,7 @@ export async function runAgent(spec: AgentSpec, context: ContextMessage[], optio
     for (let attempt = 0; attempt < 2; attempt++) {
         let res: Response
         try {
-            res = await fetch("https://api.openai.com/v1/chat/completions", {
+            res = await fetch(`${(process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "")}/chat/completions`, {
                 method: "POST",
                 headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
                 body: JSON.stringify(body),

@@ -20,11 +20,12 @@ The runner here calls our interface (`src/ports.ts`), and the model checker
 verifies our Court logic (`src/court-logic.ts`). So deploy **our** actors:
 
 1. Copy `src/actors.ts`, `src/court-logic.ts`, `src/types.ts` into the actors project (or point it at this repo), then `bun run check` there.
-2. `bunx durable-actors dev` (local control plane at `http://127.0.0.1:7100`), then `bunx durable-actors generate` so `generated/` exists here (`bun run generate`).
-3. Use a fresh Court id: `COURT_ID=webhooks-<anything>`. The id `doppelganger-demo` is already revoked in that database; do not reuse it, and do not delete persisted state.
-4. Or skip actors entirely for the demo: `bun run live --memory` runs the same Court logic in memory.
+2. The Court actor gained one method, `explain(opId, evidence)` (attaches evidence to an operation that is not under review; never changes state). Regenerate the client after copying.
+3. `bunx durable-actors dev` (local control plane at `http://127.0.0.1:7100`), then `bunx durable-actors generate` so `generated/` exists here (`bun run generate`).
+4. Use a fresh Court id: `COURT_ID=webhooks-<anything>`. The id `doppelganger-demo` is already revoked in that database; do not reuse it, and do not delete persisted state.
+5. Or skip actors entirely for the demo: `bun run live --memory` runs the same Court logic in memory.
 
-Check: the dashboard's Court docket shows epoch 1 and the infra scope after start.
+Check: the dashboard's Court docket shows epoch 1 and the infra scope after start. A persisted Court created before this change has scopes without `preauthorized`, so it will never instant-hold (everything outside-touched goes to review as before): use a fresh `COURT_ID`, or revoke and restore once to reload the default scopes.
 
 ## Relay
 

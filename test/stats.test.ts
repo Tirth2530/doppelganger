@@ -15,7 +15,7 @@ import {
     validateConfig,
     worstTypeI
 } from "../src/stats.ts"
-import { KEYS, REAL } from "./helpers.ts"
+import { KEYS, mulberry32, REAL } from "./helpers.ts"
 
 describe("exact binomial bounds", () => {
     test("binomial CDF matches hand-computed values", () => {
@@ -84,5 +84,87 @@ describe("plumbing", () => {
         expect(() => validateConfig({ ...DEFAULT_EXPERIMENT, q1: 0.4 })).toThrow()
         expect(() => validateConfig({ ...DEFAULT_EXPERIMENT, maxRounds: 2, minRounds: 4 })).toThrow()
         expect(() => validateConfig(DEFAULT_EXPERIMENT)).not.toThrow()
+    })
+})
+
+describe("anytime validity under optional stopping", () => {
+    const { robustEValue, robustOperating, worstFalseRobust, eValue, influenceThreshold } = require("../src/stats.ts") as typeof import("../src/stats.ts")
+    const C = DEFAULT_EXPERIMENT
+
+    test("the robust e-process is a supermartingale under every null rate p ≤ tauRobust", () => {
+        for (let i = 0; i <= 20; i++) {
+            const p = (C.tauRobust * i) / 20
+            const drift = p * (C.qRobust / C.tauRobust) + (1 - p) * ((1 - C.qRobust) / (1 - C.tauRobust))
+            expect(drift).toBeLessThanOrEqual(1 + 1e-12)
+        }
+    })
+
+    test("the influence e-process is a supermartingale whenever P(up | discordant) ≤ 1/2", () => {
+        for (let i = 0; i <= 10; i++) {
+            const pUp = 0.5 * (i / 10)
+            expect(pUp * 2 * C.q1 + (1 - pUp) * 2 * (1 - C.q1)).toBeLessThanOrEqual(1 + 1e-12)
+        }
+    })
+
+    test("exact worst false-robust probability within the round budget is at most alpha", () => {
+        expect(worstFalseRobust(C)).toBeLessThanOrEqual(C.alpha)
+    })
+
+    test("the old fixed-sample rule (Clopper–Pearson re-checked every round) did NOT control it: it exceeds alpha", () => {
+        let alive = new Map([[0, 1]])
+        let robust = 0
+        const p = C.tauRobust
+        for (let n = 1; n <= C.maxRounds; n++) {
+            const next = new Map<number, number>()
+            for (const [s, m] of alive)
+                for (const [d, pr] of [[1, p], [0, 1 - p]] as const) {
+                    const s2 = s + d
+                    if (n >= C.minRounds && clopperLower(s2, n, C.conf) >= C.tauRobust) robust += m * pr
+                    else next.set(s2, (next.get(s2) ?? 0) + m * pr)
+                }
+            alive = next
+        }
+        expect(robust).toBeGreaterThan(C.alpha)
+    })
+
+    test("Monte Carlo, adversarial stopping over a 200-round horizon: both e-processes cross 1/alpha at most ~alpha of the time", () => {
+        const rand = mulberry32(7)
+        const thr = influenceThreshold(C.alpha)
+        const runs = 20000
+        let falseRobust = 0
+        let falseInfluence = 0
+        for (let r = 0; r < runs; r++) {
+            let s = 0
+            let f = 0
+            for (let n = 0; n < 200; n++) {
+                if (rand() < C.tauRobust) s++
+                else f++
+                if (robustEValue(C, s, f) >= thr) {
+                    falseRobust++
+                    break
+                }
+            }
+            let up = 0
+            let down = 0
+            for (let n = 0; n < 200; n++) {
+                // the least favourable null: control and treatment reproduce at the same rate, discordant pairs split 50/50
+                const c = rand() < 0.6
+                const t = rand() < 0.6
+                if (c && !t) up++
+                if (!c && t) down++
+                if (eValue(C.q1, up, down) >= thr) {
+                    falseInfluence++
+                    break
+                }
+            }
+        }
+        // alpha plus three binomial standard errors
+        const slack = 3 * Math.sqrt((C.alpha * (1 - C.alpha)) / runs)
+        expect(falseRobust / runs).toBeLessThanOrEqual(C.alpha + slack)
+        expect(falseInfluence / runs).toBeLessThanOrEqual(C.alpha + slack)
+    })
+
+    test("a clearly robust action still clears", () => {
+        expect(robustOperating(C, 0.97)).toBeGreaterThan(0.9)
     })
 })

@@ -11,7 +11,8 @@ const TAINTED: LineageSummary = { tainted: true, externalRelayIds: ["m0"], chain
 const input = (over: Partial<SubmitInput> = {}): SubmitInput => ({
     opId: "op1",
     action: "logging.configure",
-    args: { service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" },
+    // A destination authorized in advance (internal://), so a tainted request goes to review rather than an instant hold.
+    args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks-verbose" },
     requestedBy: "infra",
     triggerRelayId: "m1",
     lineage: TAINTED,
@@ -29,6 +30,51 @@ const evidence = (verdict: Evidence["verdict"], over: Partial<Evidence> = {}): E
     note: "",
     certificate: null,
     ...over
+})
+
+describe("instant hold: a deterministic authorization reason, no evidence needed", () => {
+    const EXT = { service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" }
+
+    test("tainted + a value the human never authorized in advance: HELD at submission", () => {
+        const t = court.submit(court.initialState(), input({ args: EXT }), T)
+        expect(t.op.state).toBe("HELD")
+        expect(t.op.reason).toMatch(/^authorization: sink/)
+    })
+
+    test("not every outside value is unauthorized: a tainted request with a pre-authorized value goes to review", () => {
+        expect(court.submit(court.initialState(), input(), T).op.state).toBe("UNDER_REVIEW")
+    })
+
+    test("the same unauthorized value asked for directly by the human is approved: the hold is about outside provenance", () => {
+        expect(court.submit(court.initialState(), input({ args: EXT, lineage: CLEAN }), T).op.state).toBe("APPROVED")
+    })
+
+    test("evidence cannot release an instant hold: verdicts are no-ops, explain attaches evidence and changes nothing else", () => {
+        let s = court.submit(court.initialState(), input({ args: EXT }), T).state
+        s = court.verdict(s, "op1", evidence("robust"), 1, T).state
+        expect(s.ops[0].state).toBe("HELD")
+        const before = s
+        s = court.explain(s, "op1", evidence("robust")).state
+        expect(s.ops[0].state).toBe("HELD")
+        expect(s.ops[0].evidence?.verdict).toBe("robust")
+        expect(s.config).toEqual(before.config)
+        expect(s.epoch).toBe(before.epoch)
+        expect(court.explain(s, "op1", evidence("influenced")).changed).toBe(false) // attached once
+    })
+
+    test("explain refuses an operation still under review: only a fenced verdict may act on it", () => {
+        const s = court.submit(court.initialState(), input(), T).state
+        expect(court.explain(s, "op1", evidence("robust")).changed).toBe(false)
+        expect(court.explain(s, "op1", evidence("robust")).op.state).toBe("UNDER_REVIEW")
+    })
+
+    test("a held action still needs current authority when the human approves it", () => {
+        let s = court.submit(court.initialState(), input({ args: EXT }), T).state
+        s = court.revoke(s, "infra")
+        const t = court.decide(s, "op1", true, "oncall", null, T)
+        expect(t.op.state).not.toBe("APPROVED")
+        expect(t.state.config.logSink).toBe(court.INTERNAL_DEFAULT_SINK)
+    })
 })
 
 describe("scope", () => {

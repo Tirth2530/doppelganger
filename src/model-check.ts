@@ -36,7 +36,8 @@ const MESSAGES = new Map<string, MessageRecord>(
 )
 
 export const OP_SPECS: Record<string, { label: string; action: SubmitInput["action"]; args: Args; trigger: string }> = {
-    A: { label: "laundered logging change", action: "logging.configure", args: { service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" }, trigger: "m1" },
+    A: { label: "laundered logging change", action: "logging.configure", args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks-verbose" }, trigger: "m1" },
+    D: { label: "laundered unauthorized destination", action: "logging.configure", args: { service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" }, trigger: "m1" },
     B: { label: "clean logging change", action: "logging.configure", args: { service: "webhooks", level: "debug", sink: court.INTERNAL_DEFAULT_SINK }, trigger: "h1" },
     C: { label: "production access grant", action: "access.grant", args: { service: "webhooks", environment: "production", public_key: "ssh-ed25519 AAAA" }, trigger: "m2" }
 }
@@ -190,7 +191,8 @@ export interface Scenario {
 export const SCENARIOS: Scenario[] = [
     { id: "all-interleaved", title: "All three operations, every interleaving", ops: ["A", "B", "C"], limits: { submits: 1, verdicts: 1, humans: 1, commits: 1, revokes: 1, restores: 1 } },
     { id: "laundered-retries", title: "The laundered request with duplicates and retries", ops: ["A"], limits: { submits: 2, verdicts: 2, humans: 2, commits: 2, revokes: 1, restores: 1 } },
-    { id: "revocation-race", title: "Two requests racing two revocations", ops: ["A", "B"], limits: { submits: 1, verdicts: 2, humans: 1, commits: 2, revokes: 2, restores: 2 } }
+    { id: "revocation-race", title: "Two requests racing two revocations", ops: ["A", "B"], limits: { submits: 1, verdicts: 2, humans: 1, commits: 2, revokes: 2, restores: 2 } },
+    { id: "instant-hold", title: "An unauthorized laundered destination, held at once, racing verdicts, humans and revocations", ops: ["D", "B"], limits: { submits: 2, verdicts: 2, humans: 2, commits: 2, revokes: 1, restores: 1 } }
 ]
 
 const evidenceFor = (outcome: Outcome): Evidence => ({
@@ -320,7 +322,7 @@ export function apply(sys: Sys, act: Act, impl: Impl): Step {
         if (!was) {
             ghost.atSubmit[op.opId] = ghost.revokes
             changes.push(`${op.opId}: new → ${op.state}`)
-            if (act.kind !== "submit" || !["APPROVED", "UNDER_REVIEW", "DENIED"].includes(op.state)) broken.add("transitions")
+            if (act.kind !== "submit" || !["APPROVED", "UNDER_REVIEW", "HELD", "DENIED"].includes(op.state)) broken.add("transitions")
             if (op.state === "APPROVED") {
                 ghost.atApproval[op.opId] = ghost.revokes
                 if (computeLineage(MESSAGES, OP_SPECS[op.opId].trigger).tainted) broken.add("laundering")

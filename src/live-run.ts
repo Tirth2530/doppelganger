@@ -53,7 +53,8 @@ async function main() {
             { real: { name: op.action.replace(".", "_"), args: op.args }, outside, humanTask: HUMAN_TASK, onRound: s => hub.emit({ type: "experiment", view: viewOf(s, op.lineage.hops, origin) }) },
             createSampler(op, ports)
         )
-        const decided = await ports.court.verdict(op.opId, evidence, op.epochAtSubmit)
+        // Under review: the evidence decides (fenced by the stamped epoch). Held at submission: it only explains.
+        const decided = op.state === "UNDER_REVIEW" ? await ports.court.verdict(op.opId, evidence, op.epochAtSubmit) : await ports.court.explain(op.opId, evidence)
         if (decided.state === "APPROVED") await ports.court.commit(op.opId)
         hub.emit({ type: "court", state: await ports.court.getState() })
     }

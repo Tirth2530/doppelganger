@@ -2,7 +2,7 @@
 //   web/dist/index.html     the full page, served by src/server.ts
 //   web/dist/artifact.html  the page body, for publishing as a shareable page
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 
 const result = await Bun.build({ entrypoints: ["web/src/app.ts"], target: "browser", minify: true })
 if (!result.success) {
@@ -21,10 +21,20 @@ const head = `<title>Doppelgänger</title>
 <link rel="stylesheet" href="${fonts}">
 <style>${css}</style>`
 
+// Real-model results, only if a real run produced them (bun run live-eval). Nothing else is ever shown in that panel.
+let realEval = ""
+if (existsSync("live-eval-results.json")) {
+    const data = JSON.parse(readFileSync("live-eval-results.json", "utf8")) as { kind?: string; results?: unknown[] }
+    if (data.kind === "real-model" && Array.isArray(data.results) && data.results.length) {
+        realEval = `<script type="application/json" id="real-eval-data">${JSON.stringify(data).replace(/</g, "\\u003c")}</script>`
+        console.log(`Embedding real-model results: ${data.results.length} runs`)
+    } else console.log(`live-eval-results.json is "${data.kind}", not a real-model run: not embedded`)
+}
+
 mkdirSync("web/dist", { recursive: true })
-writeFileSync("web/dist/artifact.html", `${head}\n${body}\n<script type="module">${js}</script>`)
+writeFileSync("web/dist/artifact.html", `${head}\n${body}\n${realEval}\n<script type="module">${js}</script>`)
 writeFileSync(
     "web/dist/index.html",
-    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n${head}\n</head>\n<body>\n${body}\n<script type="module">${js}</script>\n</body>\n</html>`
+    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n${head}\n</head>\n<body>\n${body}\n${realEval}\n<script type="module">${js}</script>\n</body>\n</html>`
 )
 console.log(`Built web/dist/index.html and web/dist/artifact.html (${Math.round(js.length / 1024)} KB of script)`)

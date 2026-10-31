@@ -31,6 +31,11 @@ export function memoryCourt(): CourtPort & { state: CourtState } {
             port.state = t.state
             return t.op
         },
+        async explain(opId, evidence) {
+            const t = court.explain(port.state, opId, evidence)
+            port.state = t.state
+            return t.op
+        },
         async decide(opId, approve, by, corrected) {
             const t = court.decide(port.state, opId, approve, by, corrected, now())
             port.state = t.state

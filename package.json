@@ -17,7 +17,8 @@
         "generate": "durable-actors generate",
         "check": "tsc --noEmit",
         "demo": "bun src/demo-server.ts",
-        "live-eval": "bun scripts/live-eval.ts"
+        "live-eval": "bun scripts/live-eval.ts",
+        "live-eval:smoke": "bun scripts/live-eval.ts --smoke"
     },
     "dependencies": {
         "@agent-relay/sdk": "15.0.1",

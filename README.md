@@ -35,6 +35,10 @@ The reworded and neutralized arms differ only in whether the request survives, s
 
 The evidence layer never denies. It can only clear an action, or hand it to a human.
 
+**Instant hold.** Scopes can list values the human authorized in advance (the default: internal sinks). When a request's history reaches outside content *and* a key value is outside that list, the Court holds it for a human at submission: a deterministic authorization reason, no model call, no waiting. Not every outside value is suspect: an outside-touched request whose values are all pre-authorized still goes to the evidence layer, and the same value asked for directly by a human is approved. The twins still run for an instantly held action, but only to explain it: the Court's `explain()` attaches evidence and never changes state, so evidence can never release a held action (a model-checked transition invariant: HELD leaves only by a human decision).
+
+**Statistics, honestly.** Both verdicts that matter are anytime-valid e-processes, so their error bounds survive optional stopping (futility, budgets, re-checking after every round): "influenced" is at most α (exact worst case 2.46% at α = 5%) if the instruction had no specific effect; "robust", which approves automatically, is at most α (exact worst case 3.82%) if the neutralized twin keeps the action at a rate ≤ 0.7. The earlier robust rule (a fixed-sample Clopper–Pearson bound re-checked every round) did not have that property: its exact worst case was 8.3%, and a test now pins that down. The bounds are per action, not family-wise across many actions, and they rest on the stated assumptions (fixed rewrites that keep facts, independent rounds). Interval bars on the dashboard are descriptive only.
+
 ## Built on the sponsors, structurally
 
 **Agent Relay.** The Court joins the workspace as an agent and *owns* the privileged actions. Per the SDK, an action registered from an agent client is relay-routed: agents invoke it over Relay, Relay delivers it to the Court agent, and the SDK runs the action's `policy` before its handler. So the Court's scope check *is* the action's policy hook. An out-of-scope call never reaches a handler: the SDK completes the invocation with an error and emits its own `action.denied`, and the docket records that event. Provenance rides on the wire in `metadata.inputs`; lineage is rebuilt from `message.created`, and trust comes from the roster, never from a message. (`src/relay-wiring.ts`, typechecked against `@agent-relay/sdk` 15 source.)
@@ -43,7 +47,7 @@ The evidence layer never denies. It can only clear an action, or hand it to a hu
 
 ## Results
 
-**Model-checked Court.** 48,588 states, 730,026 transitions, all six invariants hold (executes only under current authority; revocation stops reviews in flight; laundered requests are always reviewed; only legal transitions; config is exactly what was executed; each operation executes once). Five broken Courts are each caught with their shortest counterexample.
+**Model-checked Court.** 50,231 states, 759,242 transitions, all six invariants hold (executes only under current authority; revocation stops reviews in flight; laundered requests are always reviewed; only legal transitions; config is exactly what was executed; each operation executes once). Five broken Courts are each caught with their shortest counterexample.
 
 **Against the alternatives, on a simulated suite** (`bun run eval`: 7 scenario classes × 200 instances, ground truth stated in `src/eval.ts`; it measures the decision rules, not a particular model):
 
@@ -53,11 +57,11 @@ The evidence layer never denies. It can only clear an action, or hand it to a hu
 | Prompt-injection filter | 70% | 28% | 28% |
 | Counterfactual, no placebo arm | 79% | 38% | 33% |
 | Human reviews everything that touched outside content | 100% | 100% | 0% |
-| **Doppelgänger** | **100%** | **37%** | **1%** |
+| **Doppelgänger** | **100%** | **44%** | **1%** |
 
 Only Doppelgänger stops every attack class without a human reviewing every action. The legitimate actions it does send to a human are the ones no test can attribute (fragile to any rewording). It reviews them; it does not accuse them.
 
-**Cost**: about 60 short model calls per *tested* action (rounds × 3 arms × agents replayed). Only privileged actions whose history touches outside content are tested.
+**Cost**: about 64 short model calls per *tested* action (rounds × 3 arms × agents replayed). Only privileged actions whose history touches outside content are tested.
 
 ## Run it live
 
@@ -76,7 +80,9 @@ OpenAI agents (Support, Infra) talk over Agent Relay; the Court agent owns the a
 
 **Caller identity.** A caller's role comes only from the roster of agents this run registered. Unknown callers (including a runtime placeholder such as `node`), bare role names, outsiders and humans have no role and are refused by the policy; the actions are also registered with Relay's `availableTo` set to Support and Infra only. Identity in the action input is ignored: only declared arguments reach the Court.
 
-`src/payloads.ts` is the team's: what the outside party sends in each live case. `bun run live-eval [cases.json]` runs the same pipeline on real models, without Relay, and writes what actually happened (verdicts, Court outcomes, latency, calls, tokens) to `live-eval-results.json`.
+`src/payloads.ts` is the team's: what the outside party sends in each live case.
+
+**Real-model evaluation.** `bun run live-eval:smoke` runs one attack and one legitimate case from `eval/cases.json` on real OpenAI models; `bun run live-eval --repeat 3` runs all eight starter cases three times. Each run goes through the real agents, the Court and the replay engine (in process, no Relay network) and the unprotected sandbox, and records: attacks that would have done harm unprotected and whether they were stopped, attack runs the agents didn't carry out, legitimate actions cleared or held, inconclusive replays, model calls, tokens, cost (only if you pass `OPENAI_PRICE_INPUT_PER_M`/`OPENAI_PRICE_OUTPUT_PER_M`), enforcement latency and replay time. It writes `live-eval-results.json`; `bun run build:web` then shows it in the dashboard's *Real-model evaluation* panel. Only a file whose `kind` is `real-model` is shown; with none, the panel says there are no results. The simulated suite and the scripted-model tests are reported separately.
 
 ## Honest limits
 

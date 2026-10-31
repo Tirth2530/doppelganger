@@ -16,7 +16,9 @@
 //     `message.created`, and trust comes from the roster, never the message.
 //  3. A request whose history touches outside content goes UNDER_REVIEW and is
 //     handed to the evidence layer (onReview); its verdict is fenced by the
-//     epoch the Court stamped here.
+//     epoch the Court stamped here. If it also carries a value no human
+//     authorized in advance, the Court holds it at once; the evidence layer
+//     then only explains it.
 
 import type { ActionContext, ActionPolicyDecision, AgentRelayAgent, RelayAgentClient, RelayMessageEvent } from "@agent-relay/sdk"
 
@@ -42,7 +44,7 @@ export interface WiringOptions {
     ports: ActorPorts
     roster: Roster
     emit?: (event: UiEvent) => void
-    /** Called once per operation that goes UNDER_REVIEW: start the experiment here. */
+    /** Called once per operation that goes UNDER_REVIEW (evidence decides) or is HELD at submission (evidence only explains). */
     onReview?: (op: Op) => void
     /** Agent names allowed to invoke the actions (Relay's availableTo). Default: the internal roster agents. */
     callers?: string[]
@@ -144,7 +146,8 @@ export function wireCourt(options: WiringOptions): () => void {
                 options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 const op = await ports.court.submit({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) })
                 emit({ type: "court", state: await ports.court.getState() })
-                if (op.state === "UNDER_REVIEW") options.onReview?.(op)
+                // Under review: the evidence decides. Held at once: the evidence only explains (explain() never releases).
+                if (op.state === "UNDER_REVIEW" || (op.state === "HELD" && op.lineage.tainted)) options.onReview?.(op)
                 if (op.state === "APPROVED") {
                     await ports.court.commit(op.opId)
                     emit({ type: "court", state: await ports.court.getState() })

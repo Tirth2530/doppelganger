@@ -1552,3 +1552,36 @@ html.oncall-view .oncall {
         flex-direction: column;
     }
 }
+
+/* real-model evaluation */
+.real-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 8px 32px;
+    margin: 8px 0 16px;
+}
+.real-grid .kv dd {
+    word-break: normal;
+    font-size: 12.5px;
+}
+.real-grid .kv dd b {
+    color: var(--ink);
+    font-size: 14px;
+}
+table.grid.real {
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+table.grid.real td,
+table.grid.real th {
+    width: auto;
+    height: auto;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    text-align: left;
+    padding: 5px 10px 5px 0;
+    font: 12px var(--font-mono);
+    white-space: nowrap;
+}

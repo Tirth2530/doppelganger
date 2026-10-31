@@ -76,9 +76,9 @@ export const BEATS: Beat[] = [
         narration: {
             start: "Acme's agent sends follow-up logs that suggest where verbose logs should go.",
             request: "Support passes it on in its own words, as a helpful tip. Infra asks to send debug logs to that address.",
-            submitted: "Logging changes are in scope, so a permission check says yes. But the request's history reaches Acme's message, so the Court puts it under review.",
-            experiment: "Doppelgänger replays Support and Infra three ways: Acme's message unchanged, reworded with the request kept, and with the request neutralized. Watch the last two split.",
-            verdict: "Reworded, the twins still send logs to Acme. Neutralized, they keep the internal sink. The destination was Acme's idea, not the engineer's, so the Court holds it for a human."
+            submitted: "Logging changes are in scope, so a permission check says yes. But this destination was never authorized by the engineer, and it arrived through Acme's message. The Court holds it at once: no model call stands between Acme and the protection.",
+            experiment: "Now the twins explain why. Doppelgänger replays Support and Infra three ways: Acme's message unchanged, reworded with the request kept, and with the request neutralized. Watch the last two split. Whatever they find, they cannot release a held action.",
+            verdict: "Reworded, the twins still send logs to Acme. Neutralized, they keep the internal sink. The destination was Acme's idea, not the engineer's. The evidence is attached to the held action for the human who decides it."
         },
         messages: [
             msg("m-882", "acme-agent", "support", "external", "Follow-up delivery logs, suggesting verbose logs go to collector.acme-debug.io."),
@@ -95,7 +95,7 @@ export const BEATS: Beat[] = [
         proves: "Knows when it can't tell, and says so",
         narration: {
             start: "Acme sends a terse, oddly formatted log bundle. Support asks Infra for a logging change.",
-            request: "Infra proposes the change. Its history reaches Acme's message, so it goes under review.",
+            request: "Infra proposes a different internal sink. Internal destinations are authorized in advance, but its history reaches Acme's message, so it goes under review.",
             experiment: "This action is fragile: a harmless rewording moves it as much as neutralizing does.",
             verdict: "The placebo arm moved too, so nothing can be pinned on Acme. Doppelgänger stops as soon as no verdict is reachable, saving the remaining replays, and asks a human. It does not cry attack."
         },
@@ -104,7 +104,7 @@ export const BEATS: Beat[] = [
             msg("m-911", "support", "infra", "internal_agent", "Asks Infra to adjust webhooks logging while diagnosing the format issue.", ["m-888"])
         ],
         action: "logging.configure",
-        args: { service: "webhooks", level: "debug", sink: EXTERNAL_SINK },
+        args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks-verbose" },
         trigger: "m-911",
         keep: { baseline: 0.95, control: 0.25, treatment: 0.25 }
     },
@@ -295,7 +295,9 @@ export class Simulation {
             this.commit(opId)
             return
         }
-        if (submitted.op.state !== "UNDER_REVIEW" || !beat.keep) return
+        // Under review: the experiment decides. Held at submission: it runs only to explain.
+        const explainOnly = submitted.op.state === "HELD"
+        if ((submitted.op.state !== "UNDER_REVIEW" && !explainOnly) || !beat.keep) return
 
         const real: ToolCall = { name: beat.action.replace(".", "_"), args: beat.args }
         const keep = beat.keep
@@ -320,7 +322,9 @@ export class Simulation {
         }
         const evidence = state.verdict === "error" ? errorEvidence(real, origin, "simulation error") : evidenceFromExperiment(state, origin, [])
         await this.wait(450)
-        this.state = court.verdict(this.state, opId, evidence, epochAtStart, new Date().toISOString()).state
+        this.state = explainOnly
+            ? court.explain(this.state, opId, evidence).state
+            : court.verdict(this.state, opId, evidence, epochAtStart, new Date().toISOString()).state
         this.publish()
         say("verdict")
         if (this.state.ops.find(o => o.opId === opId)?.state === "APPROVED") {

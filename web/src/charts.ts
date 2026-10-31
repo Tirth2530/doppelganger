@@ -48,7 +48,7 @@ export function ledgerChart(ledger: LedgerPoint[], threshold: number, maxRounds:
     return svg(W, H, `Influence evidence over ${ledger.length} rounds`, p.join(""))
 }
 
-/** One arm's reproduction rate with its exact Clopper–Pearson interval. */
+/** One arm's reproduction rate with its exact Clopper–Pearson interval: descriptive only; the verdicts rest on the e-processes. */
 export function armTrack(s: ArmSummary, color: string, width = 140): string {
     const W = width
     const x = (v: number) => 2 + v * (W - 4)

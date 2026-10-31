@@ -9,10 +9,15 @@
 // Lifecycle:
 //   PENDING → DENIED                      out of scope
 //   PENDING → APPROVED → EXECUTED         in scope, no outside content in its history
-//   PENDING → UNDER_REVIEW                in scope, but descends from outside content
+//   PENDING → HELD                        in scope, descends from outside content, and a key value is
+//                                         outside what the human authorized in advance: held at once
+//   PENDING → UNDER_REVIEW                in scope, descends from outside content, nothing unauthorized
 //   UNDER_REVIEW → APPROVED | HELD        evidence, if authorization has not changed
 //   UNDER_REVIEW → DENIED                 stale (a revoke happened mid-review) or out of scope
 //   HELD → APPROVED | DENIED              a human, optionally correcting arguments
+//
+// explain() attaches explanatory evidence to an operation that is no longer
+// under review. It never changes an operation's state or the config.
 
 import type { ActionName, Args, CourtState, Evidence, LogLevel, Op, OpState, Scope, ScopeDecision, ServiceConfig, SubmitInput } from "./types.ts"
 
@@ -22,10 +27,12 @@ export const DEFAULT_CONFIG: ServiceConfig = { service: "webhooks", logLevel: "i
 
 /**
  * What the on-call engineer authorized: Infra may change logging on the
- * webhooks service, up to debug. She did not restrict the destination, which is
- * exactly why a laundered destination passes an ordinary permission check.
+ * webhooks service, up to debug. The destination is not restricted (a laundered
+ * destination passes an ordinary permission check), but only internal sinks are
+ * authorized in advance: a new destination that arrives through outside content
+ * is held for her at once.
  */
-export const DEFAULT_SCOPES: Scope[] = [{ agent: "infra", action: "logging.configure", service: "webhooks", maxLevel: "debug" }]
+export const DEFAULT_SCOPES: Scope[] = [{ agent: "infra", action: "logging.configure", service: "webhooks", maxLevel: "debug", preauthorized: { sink: ["internal://"] } }]
 
 export function initialState(): CourtState {
     return { epoch: 1, scopes: DEFAULT_SCOPES.map(s => ({ ...s })), config: { ...DEFAULT_CONFIG, prodAccessKeys: [] }, ops: [] }
@@ -45,6 +52,16 @@ export function checkScope(state: CourtState, agent: string, action: ActionName,
         if (!(args.sink ?? "").trim()) return { allowed: false, reason: "a log sink is required" }
     }
     return { allowed: true, reason: "within the authorized scope" }
+}
+
+/** A key value outside what the human authorized in advance, if any. Deterministic: prefixes only. */
+export function unauthorizedValue(state: CourtState, agent: string, action: ActionName, args: Args): { arg: string; value: string } | null {
+    const scope = state.scopes.find(s => s.agent === agent && s.action === action)
+    for (const [arg, prefixes] of Object.entries(scope?.preauthorized ?? {})) {
+        const value = args[arg] ?? ""
+        if (!prefixes.some(p => value.startsWith(p))) return { arg, value }
+    }
+    return null
 }
 
 export interface Transition {
@@ -88,8 +105,26 @@ export function submit(s: CourtState, input: SubmitInput, now: string): Transiti
     const scope = checkScope(s, input.requestedBy, input.action, input.args)
     if (!scope.allowed) op = stamp(op, "DENIED", `authorization: ${scope.reason}`, now)
     else if (!input.lineage.tainted) op = { ...stamp(op, "APPROVED", "in scope, and nothing outside the company is in its history", now), epochAtApproval: s.epoch }
-    else op = stamp(op, "UNDER_REVIEW", "in scope, but its history reaches outside content: Doppelgänger is testing it", now)
+    else {
+        const u = unauthorizedValue(s, input.requestedBy, input.action, input.args)
+        op = u
+            ? stamp(op, "HELD", `authorization: ${u.arg} "${u.value}" was never authorized by a human, and it reached ${input.requestedBy} through outside content. Held for the on-call engineer.`, now)
+            : stamp(op, "UNDER_REVIEW", "in scope, but its history reaches outside content: Doppelgänger is testing it", now)
+    }
     return { state: { ...s, ops: [...s.ops, op] }, op, changed: true }
+}
+
+/**
+ * Explanatory evidence for an operation that is not under review (held at
+ * submission, or already decided). Attaches it once; never changes state, never
+ * approves, never touches the config.
+ */
+export function explain(s: CourtState, opId: string, evidence: Evidence): Transition {
+    const op = find(s, opId)
+    if (!op) throw new Error(`unknown operation ${opId}`)
+    if (op.state === "UNDER_REVIEW" || op.state === "PENDING" || op.evidence) return { state: s, op, changed: false }
+    const next = { ...op, evidence }
+    return { state: replace(s, next), op: next, changed: true }
 }
 
 function cite(e: Evidence): string {

@@ -4,7 +4,7 @@ import type { EvalReport } from "../../src/eval.ts"
 import type { ExperimentView, FeedMessage, UiEvent } from "../../src/events.ts"
 import { ASSUMPTIONS, verifyCertificate } from "../../src/experiment.ts"
 import { BEATS, Simulation } from "../../src/sim.ts"
-import { DEFAULT_EXPERIMENT, powerCurve, validateConfig, worstTypeI } from "../../src/stats.ts"
+import { DEFAULT_EXPERIMENT, powerCurve, validateConfig, worstFalseRobust, worstTypeI } from "../../src/stats.ts"
 import type { Args, CourtState, ExperimentConfig, Op, OpState, ServiceConfig } from "../../src/types.ts"
 import { initialShadow, type ShadowState } from "../../src/unprotected.ts"
 import { armTrack, frontierChart, ledgerChart, operatingChart } from "./charts.ts"
@@ -439,6 +439,56 @@ function renderDrawer(): void {
 
 // ---- the advantage ------------------------------------------------------------------
 
+// ---- real-model evaluation ------------------------------------------------------
+// Drawn only from the JSON a real `bun run live-eval` wrote and the build embedded.
+// With no such file the panel says so; it never shows example or simulated numbers.
+
+interface RealRun {
+    id: string
+    run: number
+    expected: string
+    outcome: string
+    path: string | null
+    verdict: string | null
+    agents: string
+    replayMs: number | null
+}
+
+function renderRealEval(): void {
+    const host = document.getElementById("real-eval")
+    if (!host) return
+    const el = document.getElementById("real-eval-data")
+    let data: { kind: string; model: string; ranAt: string; repeat: number; summary: Record<string, number | null>; results: RealRun[] } | null = null
+    try {
+        data = el ? JSON.parse(el.textContent ?? "") : null
+    } catch {
+        data = null
+    }
+    if (!data || data.kind !== "real-model" || !Array.isArray(data.results)) {
+        host.innerHTML = `<p class="empty">No real-model results in this build yet. Run <code>bun run live-eval</code> with an OpenAI key, then <code>bun run build:web</code>. The suite further down is simulated.</p>`
+        return
+    }
+    const s = data.summary
+    const n = (k: string) => esc(s[k] ?? 0)
+    const harmful = Number(s.attacksStopped ?? 0) + Number(s.attacksAllowed ?? 0)
+    const cost = s.estimatedCostUsd === null || s.estimatedCostUsd === undefined ? "not estimated (no prices given)" : `about $${Number(s.estimatedCostUsd).toFixed(2)}`
+    const secs = (ms: number | null | undefined) => (ms === null || ms === undefined ? "n/a" : `${(ms / 1000).toFixed(1)} s`)
+    host.innerHTML = `<p class="note">${esc(data.model)} · ${esc(data.results.length)} runs (${esc(data.repeat)}× each case) · ${esc(new Date(data.ranAt).toLocaleString())}</p>
+    <div class="real-grid">
+      <dl class="kv"><dt>attacks that would have done harm unprotected</dt><dd><b>${n("attacksStopped")} of ${esc(harmful)}</b> stopped · ${n("attacksAllowed")} allowed</dd>
+      <dt>attack runs the agents didn't carry out</dt><dd>${n("attacksHarmless")}</dd>
+      <dt>legitimate runs that reached Infra</dt><dd><b>${n("legitCleared")} of ${n("legitThatReachedInfra")}</b> cleared automatically · ${n("legitHeld")} sent to a human</dd>
+      <dt>inconclusive or failed replays</dt><dd>${n("inconclusive")} (held for a human) · ${n("errors")} errors</dd></dl>
+      <dl class="kv"><dt>model calls</dt><dd>${n("modelCalls")} (${n("replayCalls")} of them replays)</dd>
+      <dt>tokens</dt><dd>${Number(s.promptTokens ?? 0).toLocaleString()} in · ${Number(s.completionTokens ?? 0).toLocaleString()} out · ${esc(cost)}</dd>
+      <dt>enforcement latency (median)</dt><dd>${esc(s.medianEnforcementMs ?? "n/a")} ms: deny, approve or hold, before any replay</dd>
+      <dt>replay time</dt><dd>median ${secs(s.medianReplayMs)} · max ${secs(s.maxReplayMs)}</dd></dl>
+    </div>
+    <div class="table-wrap"><table class="grid real"><thead><tr><th>case</th><th>run</th><th>expected</th><th>outcome</th><th>how</th><th>evidence</th></tr></thead><tbody>${data.results
+        .map(r => `<tr><td>${esc(r.id)}</td><td>${esc(r.run)}</td><td>${esc(r.expected)}</td><td>${esc(r.outcome)}</td><td>${esc(r.path ?? r.agents)}</td><td>${esc(r.verdict ?? "")}</td></tr>`)
+        .join("")}</tbody></table></div>`
+}
+
 function renderAdvantage(): void {
     $("#frontier").innerHTML = frontierChart(evaluation.scores, widthOf("#frontier"))
     const s = (d: string) => evaluation.scores.find(x => x.decider === d)!
@@ -466,7 +516,7 @@ function renderAdvantage(): void {
 function renderTrust(): void {
     const c = store.config
     $("#operating").innerHTML = operatingChart(powerCurve(c, 0.1), c, widthOf("#operating"))
-    $("#claim").innerHTML = `If Acme's request had no specific effect, the chance of calling the action <b>influenced</b> is at most α = ${pct(c.alpha)}, whatever round the test stops at. Computed exactly over every such case, the worst is <b>${pct(worstTypeI(c), 2)}</b>.`
+    $("#claim").innerHTML = `If Acme's request had no specific effect, the chance of calling the action <b>influenced</b> is at most α = ${pct(c.alpha)}, whatever round the test stops at. Computed exactly over every such case, the worst is <b>${pct(worstTypeI(c), 2)}</b>. The automatic approval ("robust") has its own anytime-valid bound: worst case <b>${pct(worstFalseRobust(c), 2)}</b> if the neutralized twin keeps the action at a rate of ${c.tauRobust} or less.`
     ;($("#k-alpha") as HTMLInputElement).value = String(c.alpha)
     ;($("#k-max") as HTMLInputElement).value = String(c.maxRounds)
     $("#k-alpha-out").textContent = pct(c.alpha)
@@ -637,6 +687,7 @@ function boot(): void {
     installTooltips()
     renderBeats()
     $("#assumptions").innerHTML = ASSUMPTIONS.map(a => `<li><b>${esc(a.id)}</b> ${esc(a.text)}</li>`).join("")
+    renderRealEval()
     renderAdvantage()
     renderTrust()
     renderVerification()

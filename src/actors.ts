@@ -68,6 +68,13 @@ export class Court extends Actor<Viewer, Incoming, Outgoing> {
         return t.op
     }
 
+    /** Explanatory evidence for an operation no longer under review. Never changes its state. */
+    async explain(opId: string, evidence: Evidence): Promise<Op> {
+        const t = court.explain(this.snapshot(), opId, evidence)
+        this.adopt(t.state)
+        return t.op
+    }
+
     async decide(opId: string, approve: boolean, by: string, corrected: Args | null): Promise<Op> {
         const t = court.decide(this.snapshot(), opId, approve, by, corrected, now())
         this.adopt(t.state)

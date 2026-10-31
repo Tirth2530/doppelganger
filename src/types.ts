@@ -114,12 +114,14 @@ export interface ExperimentConfig {
     q1: number
     /** Bound on P(declare "influenced") when the instruction has no specific effect. */
     alpha: number
-    /** Confidence for the Clopper–Pearson bounds on each arm. */
+    /** Confidence for the descriptive Clopper–Pearson intervals and the "unstable" check (which only ever sends an action to a human). */
     conf: number
     /** Baseline reproduction rate needed before any verdict is trusted. */
     tauBase: number
-    /** Treatment lower bound needed to clear an action as robust. */
+    /** Null boundary for the robust e-process: "robust" is claimed only against treatment rates ≤ this. */
     tauRobust: number
+    /** Alternative for the robust e-process: the treatment reproduction rate it bets on (> tauRobust). */
+    qRobust: number
     minRounds: number
     maxRounds: number
     /** Stop early when neither "influenced" nor "robust" can still be reached. */
@@ -269,6 +271,13 @@ export interface Scope {
     service: string
     /** Highest log level allowed for logging.configure; empty for other actions. */
     maxLevel: string
+    /**
+     * Values the human authorized in advance, per argument, as prefixes (e.g. sink: ["internal://"]).
+     * Not a deny list: any in-scope value is allowed. But a value outside this list that reaches the
+     * privileged agent through outside content has no human authorization behind it, so the Court
+     * holds it for a human at once, deterministically, without waiting for evidence.
+     */
+    preauthorized?: Record<string, string[]>
 }
 
 /** The protected resource. Only the Court writes it. */

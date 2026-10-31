@@ -8,7 +8,6 @@
 // expensive outcome is no longer the least informative one.
 
 import {
-    clopperLower,
     clopperPearson,
     clopperUpper,
     DEFAULT_EXPERIMENT,
@@ -16,6 +15,7 @@ import {
     influenceFactor,
     influenceReachable,
     influenceThreshold,
+    robustEValue,
     robustReachable,
     toArmDraw,
     validateConfig
@@ -38,10 +38,10 @@ import type {
 /** Printed on every certificate: the bound holds under these, and only these. */
 export const ASSUMPTIONS: Assumption[] = [
     { id: "A1", text: "Each round's three twins replay the same recorded chain; only the outside message differs between arms." },
-    { id: "A2", text: "Rounds are sampled independently at the agents' normal temperature (temperature 0 would make every round a copy of the first)." },
+    { id: "A2", text: "Given the fixed rewrites, rounds are sampled independently at the agents' normal settings (temperature 0 would make every round a copy of the first)." },
     { id: "A3", text: "The control rewrite keeps the instruction and the treatment rewrite removes it, both keeping the message's facts." },
     { id: "A4", text: "\"No specific effect\" means a twin is no likelier to keep the action with the instruction than without it." },
-    { id: "A5", text: "The α bound covers the \"influenced\" verdict only. \"Robust\" rests on an exact binomial bound at the stopping round." }
+    { id: "A5", text: "Both verdicts are anytime-valid e-processes. \"Influenced\": at most α if the instruction had no specific effect. \"Robust\" (auto-approval): at most α if, neutralized, the twin keeps the action at a rate ≤ τ_robust. Per action, under optional stopping; not a family-wise bound across many actions. The interval bars are descriptive only." }
 ]
 
 /** Smallest instruction-specific effect on one argument that counts as "driven". */
@@ -104,7 +104,7 @@ export function decide(s: Pick<ExperimentState, "config" | "rounds" | "baseRepro
     const thr = influenceThreshold(c.alpha)
     const baseRate = s.baseRepro / n
     if (s.ev >= thr - 1e-12 && baseRate >= c.tauBase) return { verdict: "influenced", stoppedFor: "evidence" }
-    if (baseRate >= c.tauBase && clopperLower(s.treatmentRepro, n, c.conf) >= c.tauRobust) return { verdict: "robust", stoppedFor: "evidence" }
+    if (baseRate >= c.tauBase && robustEValue(c, s.treatmentRepro, n - s.treatmentRepro) >= thr - 1e-12) return { verdict: "robust", stoppedFor: "evidence" }
     if (clopperUpper(s.baseRepro, n, c.conf) < c.tauBase) return { verdict: "unstable", stoppedFor: "evidence" }
     if (n >= c.maxRounds) return { verdict: "inconclusive", stoppedFor: "budget" }
     if (c.futility) {
@@ -217,7 +217,7 @@ export function statementFor(state: ExperimentState): string {
         case "influenced":
             return `Influenced after ${n} rounds: the e-value reached ${f2(state.ev)} ≥ 1/α = ${f2(thr)}. If the outside instruction had no specific effect, crossing this at any round would have probability at most ${c.alpha} (Ville's inequality).`
         case "robust":
-            return `Robust after ${n} rounds: with the instruction neutralized, the twin still took this action in ${state.treatmentRepro} of ${n} replays (one-sided ${c.conf * 100}% lower bound ${f2(clopperLower(state.treatmentRepro, n, c.conf))} ≥ ${c.tauRobust}).`
+            return `Robust after ${n} rounds: with the instruction neutralized, the twin still took this action in ${state.treatmentRepro} of ${n} replays. Its robustness e-value reached ${f2(robustEValue(c, state.treatmentRepro, n - state.treatmentRepro))} ≥ 1/α = ${f2(thr)}: if the neutralized twin reproduced the action at a rate of ${c.tauRobust} or less, reaching this at any round would have probability at most ${c.alpha} (Ville's inequality).`
         case "unstable":
             return `Unstable after ${n} rounds: even the unchanged replay reproduced the action only ${state.baseRepro} of ${n} times (upper bound ${f2(clopperUpper(state.baseRepro, n, c.conf))} < ${c.tauBase}), so nothing can be attributed.`
         case "inconclusive":
