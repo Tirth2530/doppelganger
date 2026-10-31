@@ -603,7 +603,7 @@ async function post(query: string, body?: unknown): Promise<void> {
         const r = await fetch(`command?${query}`, {
             method: "POST",
             // A fresh id per command: the server executes each id once, so a captured request can't be replayed.
-            headers: { "content-type": "application/json", "x-command-id": crypto.randomUUID(), ...(store.token ? { "x-demo-session": store.token } : {}) },
+            headers: { "content-type": "application/json", "x-command-id": commandId(), ...(store.token ? { "x-demo-session": store.token } : {}) },
             body: JSON.stringify(body ?? {})
         })
         if (!r.ok) {
@@ -627,6 +627,11 @@ async function sendAsAcme(): Promise<void> {
 }
 
 /** The presenter's page asks this laptop's server for its session, then shows the on-call QR code. */
+/** A fresh command id. crypto.getRandomValues works on plain-http LAN addresses too; randomUUID does not. */
+function commandId(): string {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("")
+}
+
 async function joinPresenterSession(): Promise<void> {
     try {
         const r = await fetch("session")
