@@ -4,7 +4,7 @@ import * as court from "../src/court-logic.ts"
 import { INTERNAL_DEFAULT_SINK } from "../src/court-logic.ts"
 import type { UiEvent } from "../src/events.ts"
 import { memoryPorts } from "../src/memory-ports.ts"
-import { actionInput, wireCourt } from "../src/relay-wiring.ts"
+import { actionInput, Attestations, wireCourt } from "../src/relay-wiring.ts"
 import type { Op } from "../src/types.ts"
 import { FakeRelay } from "./fakes.ts"
 
@@ -221,6 +221,57 @@ describe("the Court on Agent Relay", () => {
             const done = events.find(e => e.type === "relay" && (e as { phase: string }).phase === "action.completed") as { detail: string }
             expect(done.detail).toMatch(/HELD/)
             expect(ports.court.state.ops[0].state).toBe("HELD")
+        })
+    })
+
+    describe("servers that report the caller as the runtime node: identity by one-time attestation", () => {
+        const args = { service: "webhooks", level: "debug", sink: INTERNAL_DEFAULT_SINK }
+        const node = { name: "node", type: "agent" as const }
+        const setup = async () => {
+            const relay = new FakeRelay()
+            const ports = memoryPorts()
+            ports.court.state = court.authorize(ports.court.state, court.caseAuthorization("c1", "oncall", new Date().toISOString()), new Date().toISOString())
+            const attestations = new Attestations()
+            const host = relay as unknown as Parameters<typeof wireCourt>[0]["host"]
+            wireCourt({ host, stream: host, ports, roster: ROSTER, attestations })
+            const m = await relay.deliver("oncall", "infra-7f2c", "raise logging", { case: "c1" })
+            await logged(ports, "infra", [m], { name: "logging_configure", args })
+            return { relay, ports, attestations, m }
+        }
+
+        test("a node caller with a valid attestation acts as the attested agent", async () => {
+            const { relay, ports, attestations, m } = await setup()
+            const r = await relay.invoke("logging.configure", actionInput(args, m, attestations.issue("infra", "logging.configure", args, m)), node)
+            expect(r.ok).toBe(true)
+            expect(ports.court.state.ops[0]).toMatchObject({ requestedBy: "infra", state: "EXECUTED" })
+        })
+        test("a node caller without an attestation is refused", async () => {
+            const { relay, ports, m } = await setup()
+            expect((await relay.invoke("logging.configure", actionInput(args, m), node)).ok).toBe(false)
+            expect(ports.court.state.config.logLevel).not.toBe("debug")
+        })
+        test("a forged, reused, or mismatched attestation is refused", async () => {
+            const { relay, ports, attestations, m } = await setup()
+            expect((await relay.invoke("logging.configure", actionInput(args, m, "forged-token"), node)).ok).toBe(false)
+            const t = attestations.issue("infra", "logging.configure", args, m)
+            expect((await relay.invoke("logging.configure", actionInput({ ...args, sink: "https://collector.acme-debug.io/ingest" }, m, t), node)).ok).toBe(false)
+            expect((await relay.invoke("logging.configure", actionInput(args, m, t), node)).ok).toBe(true)
+            const again = await relay.invoke("logging.configure", actionInput(args, "m-other", t), node)
+            expect(again.ok).toBe(false)
+            expect(ports.court.state.ops.filter(o => o.state === "EXECUTED")).toHaveLength(1)
+        })
+        test("an attestation names a role, never more authority: support attested is still out of scope", async () => {
+            const { relay, ports, attestations, m } = await setup()
+            await relay.invoke("logging.configure", actionInput(args, m, attestations.issue("support", "logging.configure", args, m)), node)
+            expect(ports.court.state.ops.every(o => o.state !== "EXECUTED")).toBe(true)
+        })
+        test("without attestations configured, node stays refused (the original behaviour)", async () => {
+            const relay = new FakeRelay()
+            const ports = memoryPorts()
+            const host = relay as unknown as Parameters<typeof wireCourt>[0]["host"]
+            wireCourt({ host, stream: host, ports, roster: ROSTER })
+            const m = await relay.deliver("oncall", "infra-7f2c", "x", { case: "c1" })
+            expect((await relay.invoke("logging.configure", actionInput(args, m, "anything"), node)).ok).toBe(false)
         })
     })
 

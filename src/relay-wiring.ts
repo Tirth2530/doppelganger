@@ -49,6 +49,10 @@ export interface WiringOptions {
     emit?: (event: UiEvent) => void
     /** Called once per operation that goes UNDER_REVIEW (evidence decides) or is HELD at submission (evidence only explains). */
     onReview?: (op: Op) => void
+    /** Agent-runtime attestations, for servers that report the caller as the runtime node. */
+    attestations?: Attestations
+    /** Caller names that mean "the agent runtime" (default ["node"]); accepted ONLY with a valid attestation. */
+    runtimeCallers?: string[]
     /** Registered agent id → name, for messages whose sender arrives as an id only. */
     nameOfId?: Map<string, string>
     /** Verify provenance against the recorded agent steps (AgentLog). Default true; turn off only in tests of other layers. */
@@ -76,13 +80,58 @@ export const PRIVILEGED_ACTIONS: { name: ActionName; description: string; requir
 
 /** The extra input field every invocation carries: the message that led to it. */
 export const TRIGGER_FIELD = "trigger_relay_id"
+/** Optional: a one-time attestation from the agent runtime (see Attestations). Never part of the arguments. */
+export const ATTESTATION_FIELD = "attestation"
 
 function schemaFor(required: string[]) {
     return {
         type: "object" as const,
         required: [...required, TRIGGER_FIELD],
         additionalProperties: false,
-        properties: Object.fromEntries([...required, TRIGGER_FIELD].map(k => [k, { type: "string" as const }]))
+        properties: Object.fromEntries([...required, TRIGGER_FIELD, ATTESTATION_FIELD].map(k => [k, { type: "string" as const }]))
+    }
+}
+
+/** Only the arguments an action declares (what the Court will see), for binding an attestation. */
+export function declaredArgs(action: ActionName, args: Args): Args {
+    const spec = PRIVILEGED_ACTIONS.find(p => p.name === action)
+    return spec ? split(args, spec.required).args : {}
+}
+
+/**
+ * Invocation attestations from the agent runtime.
+ *
+ * Some Relay servers report an action's caller as the runtime NODE (e.g. "node") rather than the agent that
+ * invoked it. That name proves nothing about which agent acted, so it is never trusted by itself. Instead,
+ * the runtime that hosts the agents (this process; models cannot reach it) issues a random single-use token
+ * for each invocation it makes on an agent's behalf, bound to that agent's role, the action, the exact
+ * arguments and the trigger. The Court accepts a node caller only with a matching, unexpired, unused token,
+ * and consumes it in the handler. A token cannot be replayed, moved to other arguments, or used for another
+ * agent; an invocation without one from a node caller is refused.
+ */
+export class Attestations {
+    private pending = new Map<string, { role: string; action: string; args: Args; trigger: string; expires: number }>()
+    constructor(private ttlMs = 60_000) {}
+
+    issue(role: string, action: string, args: Args, trigger: string): string {
+        const token = crypto.randomUUID() + crypto.randomUUID()
+        this.pending.set(token, { role, action, args: { ...args }, trigger, expires: Date.now() + this.ttlMs })
+        return token
+    }
+
+    /** The role a token attests for this exact request, or null. `consume` uses it up. */
+    check(token: string | undefined, action: string, args: Args, trigger: string, consume: boolean): string | null {
+        if (!token) return null
+        const a = this.pending.get(token)
+        if (!a) return null
+        if (Date.now() > a.expires) {
+            this.pending.delete(token)
+            return null
+        }
+        const same = a.action === action && a.trigger === trigger && JSON.stringify(Object.entries(a.args).sort()) === JSON.stringify(Object.entries(args).sort())
+        if (!same) return null
+        if (consume) this.pending.delete(token)
+        return a.role
     }
 }
 
@@ -169,12 +218,22 @@ export function wireCourt(options: WiringOptions): () => void {
     const lineageFor = (trigger: string, call?: { role: string; action: ActionName; args: Args }) =>
         verify ? verifiedLineage(ports, roles, trigger, call, toolToAction) : ports.lineage.all().then(ms => computeLineage(new Map(ms.map(m => [m.relayId, m])), trigger))
 
+    const runtimeCallers = options.runtimeCallers ?? ["node"]
+    /** A roster agent by its Relay name; or, for a runtime-node caller, the role a valid attestation names. */
+    const roleFor = (caller: string | undefined, input: unknown, action: ActionName, args: Args, trigger: string, consume: boolean): string | null => {
+        const direct = callerRole(caller, roster)
+        if (direct) return direct
+        if (!options.attestations || !caller || !runtimeCallers.includes(caller)) return null
+        const token = (input as Record<string, unknown> | null)?.[ATTESTATION_FIELD]
+        return options.attestations.check(typeof token === "string" ? token : undefined, action, args, trigger, consume)
+    }
+
     for (const spec of PRIVILEGED_ACTIONS) {
         // The safety layer, as Relay's policy: runs before the handler, refusal is Relay's own.
         const policy = async (input: unknown, ctx: ActionContext): Promise<ActionPolicyDecision> => {
-            const role = callerRole(ctx.caller?.name, roster)
-            if (!role) return { allowed: false, reason: `authorization: caller "${ctx.caller?.name ?? "unknown"}" is not a registered agent of this team` }
-            const { args } = split(input, spec.required)
+            const { args, trigger } = split(input, spec.required)
+            const role = roleFor(ctx.caller?.name, input, spec.name, args, trigger, false)
+            if (!role) return { allowed: false, reason: `authorization: caller "${ctx.caller?.name ?? "unknown"}" is not a registered agent of this team, and carries no valid runtime attestation` }
             const d = await ports.court.checkScope(role, spec.name, args)
             return { allowed: d.allowed, reason: d.reason }
         }
@@ -185,13 +244,14 @@ export function wireCourt(options: WiringOptions): () => void {
             input: schemaFor(spec.required),
             visibility: "agent",
             // Relay enforces this list too (server side and in the SDK), ahead of the policy.
-            availableTo: options.callers ?? internalAgents(roster),
+            // With attestations on, the runtime node may call too, but only with a valid token (checked in policy and handler).
+            availableTo: [...(options.callers ?? internalAgents(roster)), ...(options.attestations ? runtimeCallers : [])],
             policy,
             handler: async ({ input, agent }) => {
                 // Defence in depth: the policy already refused unknown callers.
-                const requestedBy = callerRole(agent?.name, roster)
-                if (!requestedBy) throw new Error("caller is not a registered agent of this team")
                 const { args, trigger } = split(input, spec.required)
+                const requestedBy = roleFor(agent?.name, input, spec.name, args, trigger, true)
+                if (!requestedBy) throw new Error("caller is not a registered agent of this team, and carries no valid runtime attestation")
                 // Idempotency: the SDK does not hand the handler an invocation id, so the key is the request
                 // itself. A redelivered or retried invocation maps to the same operation and is never re-run.
                 const opId = operationId(requestedBy, spec.name, args, trigger)
@@ -288,4 +348,8 @@ export function sendTracked(agent: RelayAgentClient, to: string, text: string, i
 }
 
 /** Invocation input: the action's arguments plus the message that led to it. */
-export const actionInput = (args: Args, triggerRelayId: string): Record<string, string> => ({ ...args, [TRIGGER_FIELD]: triggerRelayId })
+export const actionInput = (args: Args, triggerRelayId: string, attestation?: string): Record<string, string> => ({
+    ...args,
+    [TRIGGER_FIELD]: triggerRelayId,
+    ...(attestation ? { [ATTESTATION_FIELD]: attestation } : {})
+})
