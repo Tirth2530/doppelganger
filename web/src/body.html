@@ -39,6 +39,36 @@
             </select>
             <button class="btn quiet" id="reset">Reset</button>
         </div>
+        <div class="case-extras">
+        <div class="live-only say">
+            <label for="say-text">Try it yourself: write a message as Acme's agent. The real agents will act on it, and the Court will rule.</label>
+            <div class="say-row">
+                <textarea id="say-text" rows="2" maxlength="1500" placeholder="Hi, our webhook deliveries have been failing since this morning…"></textarea>
+                <button class="btn" id="say-send">Send as Acme's agent</button>
+            </div>
+        </div>
+        <aside class="join" id="join" hidden>
+            <div class="join-qr" id="join-qr"></div>
+            <div class="join-text">
+                <b>Judges: scan to become the on-call engineer.</b>
+                <span>Your phone decides the held actions on this screen, live. It can approve, deny and revoke; it can't start attacks.</span>
+                <code id="join-url"></code>
+                <small id="join-expiry"></small>
+            </div>
+        </aside>
+        </div>
+    </section>
+
+    <section class="compare" aria-labelledby="cmp-h">
+        <header class="compare-head">
+            <h2 id="cmp-h">Same request. Same agents. Different outcome.</h2>
+            <span id="compare-env"></span>
+        </header>
+        <div class="compare-request" id="compare-request"></div>
+        <div class="compare-grid">
+            <article class="side without" id="compare-without"></article>
+            <article class="side with" id="compare-with"></article>
+        </div>
     </section>
 
     <main class="workbench">
@@ -62,7 +92,7 @@
         <section class="col" aria-labelledby="docket-h">
             <header class="col-head"><h2 id="docket-h">The Court</h2><small>Durable Actor</small></header>
             <ol class="docket" id="docket"></ol>
-            <div class="config" id="config"></div>
+            <p class="note">Every privileged action, in order. Only the Court writes the protected system, and every write is fenced by the authorization epoch.</p>
         </section>
     </main>
 
@@ -136,7 +166,8 @@
         </article>
     </section>
 
-    <footer class="colophon">
+    <footer class="colophon" id="colophon">
         <p>In simulation the agents and their twins are drawn from stated ground truths, shown round by round in the drawer; the Court, lineage, experiment, attribution and certificates are the production code. In live mode, OpenAI agents talk over Agent Relay, the Court runs as a Durable Actor and owns the privileged actions on Relay, and the same events stream here.</p>
     </footer>
 </div>
+<main class="oncall" id="oncall" aria-live="polite"></main>

@@ -1218,3 +1218,329 @@ table.kinds td.part {
         animation: none !important;
     }
 }
+
+/* ---- same request, two systems ---- */
+.compare {
+    margin: 0 0 18px;
+    padding: 18px;
+    background: var(--panel);
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+.compare-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.compare-head h2 {
+    font-size: 22px;
+}
+.compare-head span {
+    font: 11px var(--font-mono);
+    color: var(--ink-3);
+}
+.compare-request {
+    padding: 10px 13px;
+    margin-bottom: 12px;
+    border: 1px dashed var(--line-2);
+    border-radius: 9px;
+    display: grid;
+    gap: 5px;
+}
+.req-label {
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+.compare-request code {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 13px;
+}
+.req-from {
+    font: 11px var(--font-mono);
+    color: var(--ink-3);
+}
+.compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.side {
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+}
+.side.without {
+    border-top: 3px solid var(--bad);
+}
+.side.with {
+    border-top: 3px solid var(--seal);
+}
+.side header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+}
+.side h3 {
+    font-size: 18px;
+}
+.side header span {
+    font-size: 11.5px;
+    color: var(--ink-3);
+}
+.outcome {
+    margin: 8px 0 10px;
+    font-family: var(--font-display);
+    font-size: 17px;
+}
+.outcome.bad,
+.outcome.tone-bad {
+    color: var(--bad);
+}
+.outcome.tone-good {
+    color: var(--good);
+}
+.outcome.tone-held {
+    color: var(--held);
+}
+.side dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 5px 12px;
+    margin: 0;
+    font-size: 12.5px;
+}
+.side dt {
+    color: var(--ink-3);
+}
+.side dd {
+    margin: 0;
+    text-align: right;
+    font: 12px var(--font-mono);
+    word-break: break-all;
+}
+.side dd.bad {
+    color: var(--bad);
+    font-weight: 600;
+}
+.side dd.changed {
+    color: var(--good);
+}
+
+/* ---- live only: a judge's own message, and the on-call QR ---- */
+.live-only {
+    display: none;
+}
+html.live .live-only {
+    display: block;
+}
+.say {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+}
+.say label {
+    display: block;
+    font-size: 13px;
+    color: var(--ink-2);
+    margin-bottom: 6px;
+}
+.say-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.say textarea {
+    flex: 1;
+    font: 13px var(--font-ui);
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    padding: 8px 10px;
+    resize: vertical;
+}
+.join {
+    margin-top: 14px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--seal) 45%, var(--line-2));
+    border-radius: 10px;
+}
+.join[hidden] {
+    display: none;
+}
+.join-qr svg {
+    display: block;
+    width: 116px;
+    height: 116px;
+    background: #fff;
+    border-radius: 6px;
+}
+.join-text {
+    display: grid;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--ink-2);
+}
+.join-text b {
+    color: var(--seal);
+    font-size: 14px;
+}
+.join-text code {
+    font-size: 11px;
+    color: var(--ink-3);
+    word-break: break-all;
+}
+.join-text small {
+    color: var(--ink-3);
+}
+
+/* ---- the on-call engineer's phone ---- */
+.oncall {
+    display: none;
+}
+html.oncall-view .page {
+    display: none;
+}
+html.oncall-view .oncall {
+    display: block;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 22px 16px 48px;
+}
+.oncall h1 {
+    font-size: 26px;
+}
+.oncall h2 {
+    margin: 22px 0 10px;
+    font-size: 18px;
+}
+.oncall .lead {
+    margin-top: 6px;
+    color: var(--ink-2);
+    font-size: 14px;
+}
+.oc-auth {
+    margin-top: 16px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--ink-2);
+}
+.oc-auth b {
+    color: var(--seal);
+    font-family: var(--font-display);
+    font-size: 18px;
+}
+.oc-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+}
+.oc-card {
+    padding: 14px;
+    margin-bottom: 10px;
+    border: 1px solid color-mix(in srgb, var(--held) 55%, var(--line-2));
+    border-radius: 12px;
+    background: var(--panel);
+}
+.oc-card code {
+    color: var(--seal);
+    font-size: 14px;
+}
+.oc-card dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 10px;
+    margin: 8px 0;
+    font-size: 12.5px;
+}
+.oc-card dt {
+    color: var(--ink-3);
+}
+.oc-card dd {
+    margin: 0;
+    font: 12px var(--font-mono);
+    word-break: break-all;
+}
+.oc-card p {
+    font-size: 13px;
+    color: var(--ink-2);
+}
+.oc-buttons {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+}
+.oc-buttons .btn {
+    padding: 12px;
+    font-size: 15px;
+}
+.oc-recent {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+}
+.oc-recent li span {
+    display: block;
+    font-size: 12px;
+    color: var(--ink-3);
+}
+.oc-recent li.tone-good b {
+    color: var(--good);
+}
+.oc-recent li.tone-bad b {
+    color: var(--bad);
+}
+@media (max-width: 760px) {
+    .compare-grid {
+        grid-template-columns: 1fr;
+    }
+    .say-row {
+        flex-direction: column;
+    }
+    .join {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+.case-extras {
+    display: flex;
+    gap: 14px;
+    align-items: stretch;
+}
+.case-extras .say {
+    flex: 1;
+}
+.case-extras .join {
+    flex: 0 1 460px;
+    margin-top: 14px;
+}
+.join-qr svg {
+    width: 96px;
+    height: 96px;
+}
+@media (max-width: 900px) {
+    .case-extras {
+        flex-direction: column;
+    }
+}

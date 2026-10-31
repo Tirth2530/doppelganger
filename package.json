@@ -15,12 +15,12 @@
         "live": "bun src/live-run.ts",
         "dev:actors": "durable-actors dev",
         "generate": "durable-actors generate",
-        "check": "tsc --noEmit"
+        "check": "tsc --noEmit",
+        "demo": "bun src/demo-server.ts"
     },
     "dependencies": {
-        "@agent-relay/sdk": "^15.0.0",
-        "durable-actors": "^0.14.6",
-        "openai": "^5.0.0"
+        "@agent-relay/sdk": "15.0.1",
+        "durable-actors": "0.14.6"
     },
     "devDependencies": {
         "@types/bun": "latest",

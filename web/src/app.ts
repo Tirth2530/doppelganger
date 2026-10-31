@@ -5,7 +5,8 @@ import type { ExperimentView, FeedMessage, UiEvent } from "../../src/events.ts"
 import { ASSUMPTIONS, verifyCertificate } from "../../src/experiment.ts"
 import { BEATS, Simulation } from "../../src/sim.ts"
 import { DEFAULT_EXPERIMENT, powerCurve, validateConfig, worstTypeI } from "../../src/stats.ts"
-import type { Args, CourtState, ExperimentConfig, Op, OpState } from "../../src/types.ts"
+import type { Args, CourtState, ExperimentConfig, Op, OpState, ServiceConfig } from "../../src/types.ts"
+import { initialShadow, type ShadowState } from "../../src/unprotected.ts"
 import { armTrack, frontierChart, ledgerChart, operatingChart } from "./charts.ts"
 import { $, esc, fixed, installTooltips, pct } from "./dom.ts"
 import evaluationJson from "./evaluation.json"
@@ -27,10 +28,32 @@ interface Store {
     agents: Record<string, { status: string; note: string }>
     busy: boolean
     beat: number | null
+    shadow: ShadowState
+    /** Served from the laptop (commands go to the server) rather than running in this browser. */
+    remote: boolean
+    /** The demo session token for live commands: the presenter's (from this laptop) or the on-call phone's (from the QR link). */
+    token: string | null
+    joinUrl: string | null
 }
 
-const store: Store = { mode: "simulation", config: { ...DEFAULT_EXPERIMENT }, court: null, focus: null, view: null, messages: [], agents: {}, busy: false, beat: null }
+const store: Store = {
+    mode: "simulation",
+    config: { ...DEFAULT_EXPERIMENT },
+    court: null,
+    focus: null,
+    view: null,
+    messages: [],
+    agents: {},
+    busy: false,
+    beat: null,
+    shadow: initialShadow(),
+    remote: false,
+    token: null,
+    joinUrl: null
+}
 let sim: Simulation | null = null
+const params = new URLSearchParams(location.search)
+const ONCALL_VIEW = params.get("view") === "oncall"
 
 const focusOp = (): Op | null => store.court?.ops.find(o => o.opId === store.focus) ?? null
 const widthOf = (sel: string) => Math.max(300, Math.round($(sel).getBoundingClientRect().width || 600))
@@ -52,9 +75,14 @@ function dispatch(e: UiEvent): void {
             if (!store.focus && e.state.ops.length) store.focus = e.state.ops[e.state.ops.length - 1].opId
             renderAuthority()
             renderDocket()
-            renderConfig()
+            renderCompare()
             renderConfrontation()
             renderVerdict()
+            renderOncall()
+            break
+        case "shadow":
+            store.shadow = e.state
+            renderCompare()
             break
         case "message":
             store.messages.push(e.message)
@@ -99,8 +127,10 @@ function renderAuthority(): void {
     if (!s) return
     $("#epoch strong").textContent = String(s.epoch)
     const mode = $("#mode")
-    mode.textContent = store.mode === "live" ? "live: agents on Agent Relay" : "simulation"
+    mode.textContent = store.mode === "live" ? "live: agents on Agent Relay" : store.remote ? "simulated agents, served from this laptop" : "simulation"
     mode.dataset.mode = store.mode
+    // The "write your own message" box needs live agents; it hides when they are simulated.
+    document.documentElement.classList.toggle("live", store.mode === "live")
     const scope = s.scopes.find(sc => sc.agent === "infra")
     $("#scope").innerHTML = scope
         ? `Infra may change <b>${esc(scope.service)}</b> logging, up to <b>${esc(scope.maxLevel)}</b>`
@@ -273,11 +303,92 @@ function renderDocket(): void {
         : `<li class="empty">No requests yet.</li>`
 }
 
-function renderConfig(): void {
+// ---- same request, two systems ----------------------------------------------------
+
+const DEFAULTS: ServiceConfig = initialShadow().config
+
+function configRows(c: ServiceConfig): string {
+    const cls = (changed: boolean, risky: boolean) => (!changed ? "" : risky ? "bad" : "changed")
+    const sinkOut = /^https?:/.test(c.logSink)
+    return `<dl>
+        <dt>log level</dt><dd class="${cls(c.logLevel !== DEFAULTS.logLevel, false)}">${esc(c.logLevel)}</dd>
+        <dt>log destination</dt><dd class="${cls(c.logSink !== DEFAULTS.logSink, sinkOut)}">${esc(c.logSink)}</dd>
+        <dt>production access</dt><dd class="${cls(c.prodAccessKeys.length > 0, true)}">${c.prodAccessKeys.length ? c.prodAccessKeys.map(esc).join(", ") : "nobody"}</dd>
+    </dl>`
+}
+
+function renderCompare(): void {
     const s = store.court
-    if (!s) return
-    const outside = /^https?:/.test(s.config.logSink)
-    $("#config").innerHTML = `<h3>Protected resource</h3><dl><dt>log level</dt><dd>${esc(s.config.logLevel)}</dd><dt>log sink</dt><dd class="${outside ? "bad" : "good"}">${esc(s.config.logSink)}</dd><dt>prod keys</dt><dd>${s.config.prodAccessKeys.length ? s.config.prodAccessKeys.map(esc).join(", ") : "none"}</dd></dl><p class="note">Only the Court writes this. Every write is fenced by the authorization epoch.</p>`
+    const sh = store.shadow
+    const env = `${store.mode === "live" ? "live agents on Agent Relay" : "simulated agents"} · sandbox environment: nothing real is changed`
+    $("#compare-env").textContent = env
+    const attempt = sh.executed.find(a => a.opId === store.focus) ?? sh.executed.at(-1) ?? null
+    const op = attempt ? s?.ops.find(o => o.opId === attempt.opId) ?? null : null
+    $("#compare-request").innerHTML = attempt
+        ? `<span class="req-label">The request, exactly as ${esc(attempt.requestedBy === "infra" ? "Infra" : attempt.requestedBy)} made it</span><code><span class="fn">${esc(attempt.action)}</span>${Object.entries(attempt.args)
+              .map(([k, v]) => `<span class="arg"><span class="k">${esc(k)}</span>${esc(v)}</span>`)
+              .join("")}</code><span class="req-from">triggered by ${esc(attempt.triggerRelayId || "—")} · request ${esc(attempt.opId)}</span>`
+        : `<span class="req-label">Pick a case. The agents' privileged request appears here, and both systems receive it.</span>`
+    const without = attempt ? `<p class="outcome bad">Executed immediately. No one asked why.</p>` : `<p class="outcome">Waiting for a request.</p>`
+    const t = op ? STATE_LABEL[op.state] : null
+    const correctedByHuman = !!op && /corrected/.test(op.history.map(h => h.note).join(" "))
+    const withText = !op
+        ? "Waiting for a request."
+        : op.state === "UNDER_REVIEW"
+          ? "Under review: twins are testing it."
+          : op.state === "HELD"
+            ? "Held for a human, with the reason."
+            : op.state === "DENIED"
+              ? op.decidedBy
+                  ? "Denied by a human. Nothing changed."
+                  : "Refused. Nothing changed."
+              : op.state === "EXECUTED"
+                ? op.decidedBy
+                    ? correctedByHuman
+                        ? "A human corrected it. Only the correction ran."
+                        : "A human approved it as requested."
+                    : op.lineage.tainted
+                      ? "Cleared by the twins: it survives without the outsider's request."
+                      : "Executed: nothing outside the company was involved."
+                : t!.label
+    $("#compare-without").innerHTML = `<header><h3>Without Doppelgänger</h3><span>the agent's tool runs it directly</span></header>${without}${configRows(sh.config)}`
+    $("#compare-with").innerHTML = `<header><h3>With Doppelgänger</h3><span>the Court decides, a Durable Actor</span></header><p class="outcome ${t ? `tone-${t.tone}` : ""}">${esc(withText)}</p>${s ? configRows(s.config) : ""}`
+}
+
+// ---- the on-call engineer's phone ---------------------------------------------------
+
+function renderOncall(): void {
+    if (!ONCALL_VIEW) return
+    const s = store.court
+    const el = $("#oncall")
+    if (!store.token) {
+        el.innerHTML = `<h1>Doppelgänger</h1><p class="lead">This link has no demo session. Scan the QR code on the presenter's screen.</p>`
+        return
+    }
+    if (!s) {
+        el.innerHTML = `<h1>Doppelgänger</h1><p class="lead">Connecting to the Court…</p>`
+        return
+    }
+    const scope = s.scopes.find(sc => sc.agent === "infra")
+    const held = s.ops.filter(o => o.state === "HELD")
+    const recent = s.ops.filter(o => o.state !== "HELD").slice(-4).reverse()
+    el.innerHTML = `<h1>You're the on-call engineer</h1>
+        <p class="lead">Infra's privileged actions that Doppelgänger couldn't clear arrive here. Your tap decides them on the big screen.</p>
+        <div class="oc-auth"><span>Authorization epoch <b>${s.epoch}</b></span><span>${scope ? `Infra may change ${esc(scope.service)} logging, up to ${esc(scope.maxLevel)}` : `<span class="revoked">Infra's authority is revoked</span>`}</span>
+        <div class="oc-row"><button class="btn danger" data-oc="revoke">Revoke Infra</button><button class="btn" data-oc="restore">Restore</button></div></div>
+        <h2>Waiting for you</h2>
+        ${
+            held.length
+                ? held
+                      .map(
+                          op => `<article class="oc-card"><code>${esc(op.action)}</code><dl>${Object.entries(op.args)
+                              .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
+                              .join("")}</dl><p>${esc(op.reason)}</p><div class="oc-buttons"><button class="btn good" data-decide="${esc(op.opId)}" data-approve="1" data-fix="1">Approve with our internal sink</button><button class="btn" data-decide="${esc(op.opId)}" data-approve="1">Approve as requested</button><button class="btn danger" data-decide="${esc(op.opId)}" data-approve="0">Deny</button></div></article>`
+                      )
+                      .join("")
+                : `<p class="empty">Nothing needs you right now.</p>`
+        }
+        <h2>Recent decisions</h2><ul class="oc-recent">${recent.map(op => `<li class="tone-${STATE_LABEL[op.state].tone}"><b>${esc(STATE_LABEL[op.state].label)}</b> ${esc(op.action)}<span>${esc(op.reason)}</span></li>`).join("") || `<li class="empty">None yet.</li>`}</ul>`
 }
 
 // ---- drawer -----------------------------------------------------------------------
@@ -378,20 +489,78 @@ function markBeat(): void {
     document.querySelectorAll<HTMLButtonElement>(".beat").forEach(b => b.classList.toggle("active", Number(b.dataset.beat) === store.beat))
 }
 
+/** Every live command carries the demo session token; the server checks the role. */
 async function post(query: string, body?: unknown): Promise<void> {
-    await fetch(`command?${query}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }).catch(() => {})
+    try {
+        const r = await fetch(`command?${query}`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...(store.token ? { "x-demo-session": store.token } : {}) },
+            body: JSON.stringify(body ?? {})
+        })
+        if (!r.ok) {
+            const msg = ((await r.json().catch(() => ({}))) as { error?: string }).error ?? `refused (${r.status})`
+            if (!ONCALL_VIEW) $("#narration").textContent = `The server refused that: ${msg}.`
+            else alert(`Refused: ${msg}`)
+        }
+    } catch {
+        if (!ONCALL_VIEW) $("#narration").textContent = "Can't reach the live runner."
+    }
+}
+
+async function sendAsAcme(): Promise<void> {
+    const box = $("#say-text") as HTMLTextAreaElement
+    const text = box.value.trim()
+    if (!text) return
+    store.beat = null
+    markBeat()
+    await post("do=say", { text })
+    box.value = ""
+}
+
+/** The presenter's page asks this laptop's server for its session, then shows the on-call QR code. */
+async function joinPresenterSession(): Promise<void> {
+    try {
+        const r = await fetch("session")
+        if (!r.ok) return
+        const s = (await r.json()) as { token: string; expiresAt: number; joinUrls: string[] }
+        store.token = s.token
+        store.joinUrl = s.joinUrls[0] ?? null
+        const panel = $("#join")
+        panel.hidden = false
+        $("#join-url").textContent = store.joinUrl ?? "Connect the laptop to a network so phones can reach it."
+        $("#join-expiry").textContent = `Session valid until ${new Date(s.expiresAt).toLocaleTimeString()}.`
+        if (store.joinUrl) drawQr(store.joinUrl)
+    } catch {
+        /* not served by the live runner */
+    }
+}
+
+function drawQr(url: string): void {
+    const w = window as unknown as { qrcode?: (t: number, l: string) => { addData(d: string): void; make(): void; createSvgTag(o: { cellSize: number; margin: number }): string } }
+    const render = () => {
+        if (!w.qrcode) return
+        const qr = w.qrcode(0, "M")
+        qr.addData(url)
+        qr.make()
+        $("#join-qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 })
+    }
+    if (w.qrcode) return render()
+    const s = document.createElement("script")
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"
+    s.onload = render
+    document.head.append(s)
 }
 
 async function runBeat(beat: number): Promise<void> {
     store.beat = beat
     markBeat()
-    if (store.mode === "live") return post(`run=${beat}`)
+    if (store.remote) return post(`run=${beat}`)
     sim?.reset()
     await sim?.runBeat(beat)
 }
 
 async function command(kind: "revoke" | "restore" | "reset"): Promise<void> {
-    if (store.mode === "live") return post(`do=${kind}`)
+    if (store.remote) return post(`do=${kind}`)
     if (kind === "reset") {
         store.beat = null
         markBeat()
@@ -402,7 +571,7 @@ async function command(kind: "revoke" | "restore" | "reset"): Promise<void> {
 
 async function humanDecides(opId: string, approve: boolean, fix: boolean): Promise<void> {
     const corrected = fix ? { sink: INTERNAL_DEFAULT_SINK } : null
-    if (store.mode === "live") return post("do=decide", { opId, approve, corrected })
+    if (store.remote) return post("do=decide", { opId, approve, corrected })
     sim?.decide(opId, approve, corrected)
 }
 
@@ -415,11 +584,30 @@ function renderAll(): void {
     renderLedger()
     renderVerdict()
     renderDocket()
-    renderConfig()
+    renderCompare()
     renderDrawer()
+    renderOncall()
+}
+
+function bootOncall(): void {
+    document.documentElement.classList.add("oncall-view")
+    store.mode = "live"
+    store.remote = true
+    store.token = params.get("t")
+    document.addEventListener("click", e => {
+        const t = e.target as HTMLElement
+        const d = t.closest<HTMLButtonElement>("[data-decide]")
+        if (d) return void humanDecides(d.dataset.decide!, d.dataset.approve === "1", d.dataset.fix === "1")
+        const oc = t.closest<HTMLButtonElement>("[data-oc]")
+        if (oc) void post(`do=${oc.dataset.oc}`)
+    })
+    const src = new EventSource("events")
+    src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)
+    renderOncall()
 }
 
 function boot(): void {
+    if (ONCALL_VIEW) return bootOncall()
     installTooltips()
     renderBeats()
     $("#assumptions").innerHTML = ASSUMPTIONS.map(a => `<li><b>${esc(a.id)}</b> ${esc(a.text)}</li>`).join("")
@@ -467,8 +655,12 @@ function boot(): void {
         }, 150)
     })
 
-    if (new URLSearchParams(location.search).get("mode") === "live") {
+    if (params.get("mode") === "live") {
         store.mode = "live"
+        store.remote = true
+        document.documentElement.classList.add("live")
+        $("#say-send").addEventListener("click", () => void sendAsAcme())
+        void joinPresenterSession()
         const src = new EventSource("events")
         src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)
     } else {
