@@ -18,7 +18,8 @@
         "check": "tsc --noEmit",
         "demo": "bun src/demo-server.ts",
         "live-eval": "bun scripts/live-eval.ts",
-        "live-eval:smoke": "bun scripts/live-eval.ts --smoke"
+        "live-eval:smoke": "bun scripts/live-eval.ts --smoke",
+        "live:check": "bun src/live-run.ts --check"
     },
     "dependencies": {
         "@agent-relay/sdk": "15.0.1",

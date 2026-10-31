@@ -25,7 +25,10 @@ import type { ActionContext, ActionPolicyDecision, AgentRelayAgent, RelayAgentCl
 import type { UiEvent } from "./events.ts"
 import type { ActorPorts } from "./ports.ts"
 import { computeLineage } from "./replay-logic.ts"
-import type { ActionName, Args, MessageRecord, Op, Trust } from "./types.ts"
+import { createHash } from "node:crypto"
+
+import { TOOL_TO_ACTION } from "./scenario.ts"
+import type { ActionName, Args, LineageSummary, MessageRecord, Op, StepRecord, Trust } from "./types.ts"
 
 export interface Roster {
     /** Agents outside the company. Their messages taint every request that descends from them. */
@@ -46,6 +49,10 @@ export interface WiringOptions {
     emit?: (event: UiEvent) => void
     /** Called once per operation that goes UNDER_REVIEW (evidence decides) or is HELD at submission (evidence only explains). */
     onReview?: (op: Op) => void
+    /** Verify provenance against the recorded agent steps (AgentLog). Default true; turn off only in tests of other layers. */
+    verifyProvenance?: boolean
+    /** Tool name → action, to match a call against the caller's recorded step. Default: the demo agents' tools. */
+    toolToAction?: Record<string, ActionName>
     /** Agent names allowed to invoke the actions (Relay's availableTo). Default: the internal roster agents. */
     callers?: string[]
     /** Called for every privileged request, refused or not: what an agent tried to do. */
@@ -110,13 +117,55 @@ function split(input: unknown, declared: string[]): { args: Args; trigger: strin
     return { args, trigger: typeof raw[TRIGGER_FIELD] === "string" ? (raw[TRIGGER_FIELD] as string) : "" }
 }
 
+/**
+ * The history of a request, verified against the recorded agent steps
+ * (AgentLog): an internal message counts as produced from what the step that
+ * SENT it read, never from the inputs it claims; and, given the call, a step of
+ * the caller must have read the trigger and made exactly this call. Anything
+ * that does not check out is listed as unverified, and the Court holds it.
+ */
+export async function verifiedLineage(
+    ports: ActorPorts,
+    roles: string[],
+    trigger: string,
+    call?: { role: string; action: ActionName; args: Args },
+    toolToAction: Record<string, ActionName> = TOOL_TO_ACTION
+): Promise<LineageSummary> {
+    const messages = new Map((await ports.lineage.all()).map(m => [m.relayId, m]))
+    const producers = new Map<string, StepRecord>()
+    const stepsByRole = new Map<string, StepRecord[]>()
+    for (const role of roles) {
+        const steps = await ports.log(role).steps()
+        stepsByRole.set(role, steps)
+        for (const st of steps) for (const id of st.sentRelayIds) producers.set(id, st)
+    }
+    const lineage = computeLineage(messages, trigger, id => producers.get(id) ?? null)
+    if (call) {
+        const made = (stepsByRole.get(call.role) ?? []).some(
+            st => st.read.includes(trigger) && st.toolCalls.some(c => toolToAction[c.name] === call.action && Object.entries(call.args).every(([k, v]) => c.args[k] === v))
+        )
+        if (!made) return { ...lineage, tainted: true, unverified: [...(lineage.unverified ?? []), `call:${trigger || "(none)"}`] }
+    }
+    return lineage
+}
+
+/** A stable operation id for one request: same caller, action, arguments and trigger → same id. */
+export function operationId(role: string, action: ActionName, args: Args, trigger: string): string {
+    const canon = JSON.stringify([role, action, trigger, Object.keys(args).sort().map(k => [k, args[k]])])
+    return `op-${createHash("sha256").update(canon).digest("hex").slice(0, 16)}`
+}
+
 /** Registers the privileged actions on Relay with the Court as their policy and handler. Returns a disposer. */
 export function wireCourt(options: WiringOptions): () => void {
     const { host, stream, ports, roster } = options
     const emit = options.emit ?? (() => {})
     const disposers: (() => void)[] = []
-    let counter = 0
-    const lineageFor = async (trigger: string) => computeLineage(new Map((await ports.lineage.all()).map(m => [m.relayId, m])), trigger)
+    const verify = options.verifyProvenance !== false
+    const toolToAction = options.toolToAction ?? TOOL_TO_ACTION
+    const roles = [...new Set(internalAgents(roster).map(n => roster.roles[n]))]
+
+    const lineageFor = (trigger: string, call?: { role: string; action: ActionName; args: Args }) =>
+        verify ? verifiedLineage(ports, roles, trigger, call, toolToAction) : ports.lineage.all().then(ms => computeLineage(new Map(ms.map(m => [m.relayId, m])), trigger))
 
     for (const spec of PRIVILEGED_ACTIONS) {
         // The safety layer, as Relay's policy: runs before the handler, refusal is Relay's own.
@@ -141,10 +190,14 @@ export function wireCourt(options: WiringOptions): () => void {
                 const requestedBy = callerRole(agent?.name, roster)
                 if (!requestedBy) throw new Error("caller is not a registered agent of this team")
                 const { args, trigger } = split(input, spec.required)
-                const opId = `op-${Date.now().toString(36)}-${++counter}`
+                // Idempotency: the SDK does not hand the handler an invocation id, so the key is the request
+                // itself. A redelivered or retried invocation maps to the same operation and is never re-run.
+                const opId = operationId(requestedBy, spec.name, args, trigger)
+                const existing = (await ports.court.getState()).ops.find(o => o.opId === opId)
+                if (existing) return { opId, state: existing.state, reason: `duplicate of ${opId}: ${existing.reason}` }
                 emit({ type: "invoke", agent: requestedBy, action: spec.name, args, triggerRelayId: trigger, opId })
                 options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
-                const op = await ports.court.submit({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) })
+                const op = await ports.court.submit({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger, { role: requestedBy, action: spec.name, args }) })
                 emit({ type: "court", state: await ports.court.getState() })
                 // Under review: the evidence decides. Held at once: the evidence only explains (explain() never releases).
                 if (op.state === "UNDER_REVIEW" || (op.state === "HELD" && op.lineage.tainted)) options.onReview?.(op)
@@ -157,12 +210,28 @@ export function wireCourt(options: WiringOptions): () => void {
         })
         disposers.push(() => handle.unregister())
 
+        // Relay's own lifecycle events, observed, shown as such. "completed" means the Court's handler
+        // returned (possibly HELD); only the Court's EXECUTED state means the change happened.
+        disposers.push(
+            host.addListener(handle.invoked(), event => emit({ type: "relay", phase: "action.invoked", action: spec.name, caller: event.agent?.name ?? "?", at: event.at, detail: "" }))
+        )
+        disposers.push(
+            host.addListener(handle.completed(), event => {
+                const out = (event.output ?? {}) as { opId?: string; state?: string }
+                emit({ type: "relay", phase: "action.completed", action: spec.name, caller: event.agent?.name ?? "?", at: event.at, detail: `handler returned ${out.state ?? "?"} for ${out.opId ?? "?"}` })
+            })
+        )
+        disposers.push(
+            host.addListener(handle.failed(), event => emit({ type: "relay", phase: "action.failed", action: spec.name, caller: event.agent?.name ?? "?", at: event.at, detail: String((event as { error?: unknown }).error ?? "") }))
+        )
+
         // Relay's own denial event is the record.
         disposers.push(
             host.addListener(handle.denied(), async event => {
                 const { args, trigger } = split(event.input, spec.required)
                 const opId = `denied-${spec.name}-${event.at}`
                 const requestedBy = callerRole(event.agent?.name, roster) ?? `unknown:${event.agent?.name ?? "?"}`
+                emit({ type: "relay", phase: "action.denied", action: spec.name, caller: event.agent?.name ?? "?", at: event.at, detail: event.reason ?? "" })
                 options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 await ports.court.recordDenied(
                     { opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) },

@@ -59,3 +59,23 @@ Relay's `action.completed` means the Court's handler returned. The handler retur
 - `bun install && bun test && bun run build:web`
 - `bun run live-eval` with the team's payloads, to see real verdicts and replay cost on your key before going on stage.
 - If live fails for any reason: `bun run demo`. The page then says SIMULATED, and the phone flow is the same.
+
+## SDK contract, as checked against @agent-relay/sdk 15.0.1 source
+
+Checked by typechecking this repo against the 15.0.1 package source (`packages/sdk`, version field 15.0.1), not against a running server:
+
+- `registerAction({ name, description, input, visibility, availableTo, policy, handler })`: `input` accepts a plain JSON Schema (`ActionSchema = JsonSchema | ZodLikeSchema | SafeParseSchema`, `actions/types.ts`); Zod is optional. `availableTo` takes `AgentLike[]`, and strings are allowed (`AgentLike = string | AgentRef`); the facade checks it before our policy and also forwards it to the server.
+- `policy(input, ctx)` returns `{ allowed, reason? }` (`ActionPolicyDecision`); a refusal emits `action.denied` and never reaches the handler.
+- Typed handle predicates: `invoked()`, `completed()` (with `output`), `failed()`, `denied()` (with `reason`), each delivering `{ action, agent, input, at }`.
+- `workspace.register()` is declared to return `RelayAgentClient`, which does not declare `registerAction`/`addListener`/`capabilities`, but the runtime object has them (`agent-relay.ts`). `src/live-run.ts` now checks each at startup and stops with a clear error if they are missing, instead of casting blindly.
+- `capabilities.invoke(name, input)` is fire-and-forget; results arrive as action events.
+- The handler context has no invocation id (`ActionContext` = caller, workspaceId, messaging, emit), so idempotency keys are derived from the request.
+
+Still unverified: all of it against a running Relaycast server. `bun run live:check` is the test.
+
+## Order of work for the live run
+
+1. `bun run live:check -- --memory` (Relay + OpenAI, Court in memory). Read `live-check-results.json`.
+2. If the caller shows as `node`, see "The caller-identity issue" above: every action will be refused, by design.
+3. Then with actors: deploy our `src/actors.ts`, regenerate, fresh `COURT_ID`, `bun run live:check`.
+4. `bun run live-eval:smoke`, then `bun run live-eval --repeat 3`, then `bun run build:web`.

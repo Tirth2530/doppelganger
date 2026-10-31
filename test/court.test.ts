@@ -5,8 +5,8 @@ import { computeLineage, traceValues } from "../src/replay-logic.ts"
 import type { Evidence, LineageSummary, MessageRecord, SubmitInput } from "../src/types.ts"
 
 const T = "2026-10-31T12:00:00Z"
-const CLEAN: LineageSummary = { tainted: false, externalRelayIds: [], chain: ["m1"], hops: 1 }
-const TAINTED: LineageSummary = { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1 }
+const CLEAN: LineageSummary = { tainted: false, externalRelayIds: [], chain: ["m1", "h1"], hops: 1, humanRelayIds: ["h1"], unverified: [] }
+const TAINTED: LineageSummary = { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "h1", "m0"], hops: 1, humanRelayIds: ["h1"], unverified: [] }
 
 const input = (over: Partial<SubmitInput> = {}): SubmitInput => ({
     opId: "op1",
@@ -174,7 +174,31 @@ describe("lineage", () => {
 
     test("taint is traced through a trusted hop", () => {
         const m = new Map([msg("m0", "external"), msg("m1", "internal_agent", ["m0"])].map(r => [r.relayId, r]))
-        expect(computeLineage(m, "m1")).toEqual({ tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1 })
+        expect(computeLineage(m, "m1")).toEqual({ tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1, humanRelayIds: [], unverified: [] })
+    })
+
+    test("with recorded steps, provenance comes from what the step READ, not what the message claims", () => {
+        // m1 claims it came only from the human; its recorded step actually read the outside message too.
+        const m = new Map([msg("h1", "human"), msg("m0", "external"), msg("m1", "internal_agent", ["h1"])].map(r => [r.relayId, r]))
+        expect(computeLineage(m, "m1").tainted).toBe(false)
+        const verified = computeLineage(m, "m1", id => (id === "m1" ? { read: ["h1", "m0"] } : null))
+        expect(verified).toMatchObject({ tainted: true, externalRelayIds: ["m0"], humanRelayIds: ["h1"] })
+    })
+
+    test("an internal message no recorded step sent is unverified, tainted, and held at submission", () => {
+        const m = new Map([msg("h1", "human"), msg("m1", "internal_agent", ["h1"])].map(r => [r.relayId, r]))
+        const lineage = computeLineage(m, "m1", () => null)
+        expect(lineage).toMatchObject({ tainted: true, unverified: ["m1"] })
+        expect(court.submit(court.initialState(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op.state).toBe("HELD")
+    })
+
+    test("no human request in its history: held, even with no outside content (absence of an attack is not intent)", () => {
+        const m = new Map([msg("m1", "internal_agent", [])].map(r => [r.relayId, r]))
+        const lineage = computeLineage(m, "m1")
+        expect(lineage).toMatchObject({ tainted: false, humanRelayIds: [] })
+        const op = court.submit(court.initialState(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/no human request/)
     })
 
     test("a human's message is clean; unknown provenance is treated as outside", () => {

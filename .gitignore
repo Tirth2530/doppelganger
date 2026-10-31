@@ -5,3 +5,4 @@ generated/
 .agentworkforce/
 *.log
 live-eval-results.json
+live-check-results.json

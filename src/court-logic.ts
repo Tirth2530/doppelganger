@@ -8,7 +8,9 @@
 //
 // Lifecycle:
 //   PENDING → DENIED                      out of scope
-//   PENDING → APPROVED → EXECUTED         in scope, no outside content in its history
+//   PENDING → HELD                        in scope, but no human request in its history, or its
+//                                         provenance could not be verified: absence of an attack is not intent
+//   PENDING → APPROVED → EXECUTED         in scope, a human's request, no outside content in its history
 //   PENDING → HELD                        in scope, descends from outside content, and a key value is
 //                                         outside what the human authorized in advance: held at once
 //   PENDING → UNDER_REVIEW                in scope, descends from outside content, nothing unauthorized
@@ -104,6 +106,10 @@ export function submit(s: CourtState, input: SubmitInput, now: string): Transiti
     let op = fresh(s, input, now)
     const scope = checkScope(s, input.requestedBy, input.action, input.args)
     if (!scope.allowed) op = stamp(op, "DENIED", `authorization: ${scope.reason}`, now)
+    else if (input.lineage.unverified?.length)
+        op = stamp(op, "HELD", `authorization: provenance of ${input.lineage.unverified.join(", ")} could not be verified against the recorded agent steps. Held for the on-call engineer.`, now)
+    else if (!input.lineage.humanRelayIds?.length)
+        op = stamp(op, "HELD", "authorization: no human request is in its history, so nothing shows a human asked for this. Held for the on-call engineer.", now)
     else if (!input.lineage.tainted) op = { ...stamp(op, "APPROVED", "in scope, and nothing outside the company is in its history", now), epochAtApproval: s.epoch }
     else {
         const u = unauthorizedValue(s, input.requestedBy, input.action, input.args)

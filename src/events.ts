@@ -67,6 +67,8 @@ export type UiEvent =
     | { type: "message"; message: FeedMessage }
     | { type: "agent"; agent: string; status: "idle" | "thinking" | "acting"; note: string }
     | { type: "invoke"; agent: string; action: ActionName; args: Args; triggerRelayId: string; opId: string }
+    /** An Agent Relay action lifecycle event, as observed from the SDK (never synthesized). */
+    | { type: "relay"; phase: "action.invoked" | "action.completed" | "action.failed" | "action.denied"; action: string; caller: string; at: string; detail: string }
     | { type: "experiment"; view: ExperimentView }
     | { type: "narrate"; text: string }
     | { type: "busy"; busy: boolean }

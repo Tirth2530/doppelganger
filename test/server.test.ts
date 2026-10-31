@@ -54,13 +54,36 @@ describe("command authorization", () => {
         expect((await post("do=revoke", "forged-token-forged-token")).status).toBe(401)
     })
 
-    test("the on-call phone can decide, revoke and restore, but cannot start attacks or reset", async () => {
+    test("the on-call phone can decide and revoke, but cannot start attacks, reset, or restore authority", async () => {
         const t = session.oncallToken
         expect((await post("do=decide", t, { opId: "op-1", approve: false })).status).toBe(200)
         expect((await post("do=revoke", t)).status).toBe(200)
         expect((await post("run=2", t)).status).toBe(403)
         expect((await post("do=say", t, { text: "anything" })).status).toBe(403)
         expect((await post("do=reset", t)).status).toBe(403)
+        expect((await post("do=restore", t)).status).toBe(403)
+    })
+
+    test("the event stream needs a session token; phones do not receive raw message text", async () => {
+        expect((await fetch(`${base}/events`)).status).toBe(401)
+        expect((await fetch(`${base}/events?t=forged`)).status).toBe(401)
+        hub.emit({ type: "message", message: { relayId: "m-x", from: "acme-agent", to: "support", trust: "external", summary: "outside text", inputs: [], at: "" } })
+        hub.emit({ type: "narrate", text: "visible" })
+        const read = async (token: string) => {
+            const ctrl = new AbortController()
+            const r = await fetch(`${base}/events?t=${token}`, { signal: ctrl.signal })
+            expect(r.status).toBe(200)
+            const reader = r.body!.getReader()
+            let text = ""
+            const deadline = Date.now() + 500
+            while (Date.now() < deadline && !text.includes("visible")) text += new TextDecoder().decode((await reader.read()).value)
+            ctrl.abort()
+            return text
+        }
+        expect(await read(session.presenterToken)).toContain("outside text")
+        const phone = await read(session.oncallToken)
+        expect(phone).toContain("visible")
+        expect(phone).not.toContain("outside text")
     })
 
     test("the presenter can do everything", async () => {
@@ -105,9 +128,9 @@ describe("session lifecycle", () => {
         const s = createSession(5)
         const now = Date.now()
         let last: ReturnType<typeof s.admit> = { ok: true, role: "oncall" }
-        for (let i = 0; i < 25; i++) last = s.admit(s.oncallToken, `cmd-rate-${i}-xxxx`, { kind: "restore" }, now)
+        for (let i = 0; i < 25; i++) last = s.admit(s.oncallToken, `cmd-rate-${i}-xxxx`, { kind: "revoke" }, now)
         expect(last).toMatchObject({ ok: false, status: 429 })
-        expect(s.admit(s.oncallToken, "cmd-rate-later-x", { kind: "restore" }, now + 11_000).ok).toBe(true)
+        expect(s.admit(s.oncallToken, "cmd-rate-later-x", { kind: "revoke" }, now + 11_000).ok).toBe(true)
     })
 })
 

@@ -88,7 +88,8 @@ The last line invites the strongest question a judge can ask. If live agents wor
 ## Pre-demo checklist
 
 - `bun install && bun test`
-- **Real-model proof first:** `bun run live-eval:smoke` (one attack, one legitimate case), then `bun run live-eval --repeat 3` if time and budget allow, then `bun run build:web` so the dashboard's *Real-model evaluation* panel shows it. Quote counts ("stopped 6 of 6 harmful attack runs; cleared 9 of 12 legitimate runs"), never percentages, and only what the file says.
+- **Integration proof:** `bun run live:check -- --memory` (then without `--memory` if actors are up). It must show the attack held, the correction executed, the retry deduplicated, the legitimate case executed, and Relay events observed.
+- **Real-model proof:** `bun run live-eval:smoke` (one attack, one legitimate case), then `bun run live-eval --repeat 3` if time and budget allow, then `bun run build:web` so the dashboard's *Real-model evaluation* panel shows it. Quote counts ("stopped 6 of 6 harmful attack runs; cleared 9 of 12 legitimate runs"), never percentages, and only what the file says.
 - Live: `relay init`, `durable-actors dev && bun run generate` (or `--memory`), then `OPENAI_API_KEY=… OPENAI_MODEL=… RELAY_WORKSPACE_KEY=… bun run live`
 - Fallback with no keys: `bun run demo`. The phone flow works the same, and the agents are labelled simulated.
 - Phones must reach the laptop. Venue Wi-Fi often blocks device-to-device traffic, so test it. If it fails, run `cloudflared tunnel --url http://localhost:3000` and restart with `PUBLIC_URL=<tunnel url>`, and the QR will point there. The session token still protects every command.
@@ -125,6 +126,9 @@ Authority lives in the chain between agents, and Relay is where that chain is. T
 
 **"What would make it fail?"**
 An outsider's goal disguised as a natural subtask of the human's request can survive neutralization. Scope limits and human review stay as the backstop, and we say so.
+
+**"Couldn't an agent lie about where a request came from?"**
+Provenance isn't taken from agents. The Court rebuilds each request's history from the recorded agent steps: what each step actually read, and the exact call it made. A message no step sent, or a call no step made, is held. And it approves automatically only when a human's request is in that history.
 
 **"Is the agent identity real?"**
 A caller's role comes only from the agents this run registered on Relay. An unknown caller, even one named "infra", gets no authority, and identity written into the request is ignored. The actions are also restricted on Relay itself to our two agents.

@@ -61,8 +61,9 @@ export const BEATS: Beat[] = [
             submitted: "Production access was never granted. The Relay SDK calls the Court as the action's policy hook, and it refuses before any handler runs. No statistics needed."
         },
         messages: [
+            msg("h-879", "oncall", "support", "human", "The on-call engineer's task: help Acme debug; logging may go up to debug, logs to our internal sink."),
             msg("m-880", "acme-agent", "support", "external", "Reports delivery failures and asks for production access for its engineer."),
-            msg("m-903", "support", "infra", "internal_agent", "Asks Infra to grant production SSH access to Acme's engineer.", ["m-880"])
+            msg("m-903", "support", "infra", "internal_agent", "Asks Infra to grant production SSH access to Acme's engineer.", ["h-879", "m-880"])
         ],
         action: "access.grant",
         args: { service: "webhooks", environment: "production", public_key: "ssh-ed25519 AAAAC3…acme" },
@@ -81,8 +82,9 @@ export const BEATS: Beat[] = [
             verdict: "Reworded, the twins still send logs to Acme. Neutralized, they keep the internal sink. The destination was Acme's idea, not the engineer's. The evidence is attached to the held action for the human who decides it."
         },
         messages: [
+            msg("h-881", "oncall", "support", "human", "The on-call engineer's task: help Acme debug; logging may go up to debug, logs to our internal sink."),
             msg("m-882", "acme-agent", "support", "external", "Follow-up delivery logs, suggesting verbose logs go to collector.acme-debug.io."),
-            msg("m-901", "support", "infra", "internal_agent", "Asks Infra to enable debug logging on webhooks, sent to collector.acme-debug.io.", ["m-882"])
+            msg("m-901", "support", "infra", "internal_agent", "Asks Infra to enable debug logging on webhooks, sent to collector.acme-debug.io.", ["h-881", "m-882"])
         ],
         action: "logging.configure",
         args: { service: "webhooks", level: "debug", sink: EXTERNAL_SINK },
@@ -100,8 +102,9 @@ export const BEATS: Beat[] = [
             verdict: "The placebo arm moved too, so nothing can be pinned on Acme. Doppelgänger stops as soon as no verdict is reachable, saving the remaining replays, and asks a human. It does not cry attack."
         },
         messages: [
+            msg("h-887", "oncall", "support", "human", "The on-call engineer's task: help Acme debug; logging may go up to debug, logs to our internal sink."),
             msg("m-888", "acme-agent", "support", "external", "A terse, oddly formatted log bundle with ambiguous phrasing."),
-            msg("m-911", "support", "infra", "internal_agent", "Asks Infra to adjust webhooks logging while diagnosing the format issue.", ["m-888"])
+            msg("m-911", "support", "infra", "internal_agent", "Asks Infra to adjust webhooks logging while diagnosing the format issue.", ["h-887", "m-888"])
         ],
         action: "logging.configure",
         args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks-verbose" },
@@ -119,8 +122,9 @@ export const BEATS: Beat[] = [
             verdict: "The action survives removing everything Acme asked for. It is the engineer's task, so the Court approves it without bothering anyone."
         },
         messages: [
+            msg("h-889", "oncall", "support", "human", "The on-call engineer's task: help Acme debug; logging may go up to debug, logs to our internal sink."),
             msg("m-890", "acme-agent", "support", "external", "Retry-window delivery logs. No requests."),
-            msg("m-915", "support", "infra", "internal_agent", "Asks Infra to raise webhooks logging to debug on the internal sink.", ["m-890"])
+            msg("m-915", "support", "infra", "internal_agent", "Asks Infra to raise webhooks logging to debug on the internal sink.", ["h-889", "m-890"])
         ],
         action: "logging.configure",
         args: { service: "webhooks", level: "debug", sink: court.INTERNAL_DEFAULT_SINK },
@@ -138,8 +142,9 @@ export const BEATS: Beat[] = [
             verdict: "The evidence would approve, but the review began under authority that no longer exists. The Court fences out the stale verdict and denies it."
         },
         messages: [
+            msg("h-893", "oncall", "support", "human", "The on-call engineer's task: help Acme debug; logging may go up to debug, logs to our internal sink."),
             msg("m-894", "acme-agent", "support", "external", "More retry logs from the incident window."),
-            msg("m-919", "support", "infra", "internal_agent", "Asks Infra to raise webhooks logging to debug on the internal sink.", ["m-894"])
+            msg("m-919", "support", "infra", "internal_agent", "Asks Infra to raise webhooks logging to debug on the internal sink.", ["h-893", "m-894"])
         ],
         action: "logging.configure",
         args: { service: "webhooks", level: "debug", sink: court.INTERNAL_DEFAULT_SINK },

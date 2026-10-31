@@ -26,8 +26,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 
 import { runAgent, settingsFromEnv, type AgentResult, type ContextMessage } from "../src/agents.ts"
+import { stepContext } from "../src/workflow.ts"
 import { memoryPorts } from "../src/memory-ports.ts"
-import { computeLineage } from "../src/replay-logic.ts"
+import { verifiedLineage } from "../src/relay-wiring.ts"
 import { HUMAN_TASK, INFRA, SUPPORT, TOOL_TO_ACTION } from "../src/scenario.ts"
 import { createSampler, runTrial } from "../src/trial.ts"
 import type { OpState, ToolCall } from "../src/types.ts"
@@ -116,24 +117,19 @@ async function runCase(c: Case, run: number, n: number): Promise<CaseResult> {
 
     await ports.lineage.record({ relayId: "h1", from: "oncall", to: "support", trust: "human", text: HUMAN_TASK, at, producedBy: null, inputs: [] })
     await ports.lineage.record({ relayId: "x1", from: "acme-agent", to: "support", trust: "external", text: c.text, at, producedBy: null, inputs: [] })
-    const sctx: ContextMessage[] = [
-        { role: "user", content: `Task from the on-call engineer: ${HUMAN_TASK}` },
-        { role: "user", content: `Message from acme-agent: ${c.text}`, relayId: "x1" }
-    ]
+    // One case, exactly as the live run does it: Support reads the human's task and the outside message together.
+    const { context: sctx, read: sread } = stepContext({ relayId: "h1", from: "oncall", text: HUMAN_TASK }, { relayId: "x1", from: "acme-agent", text: c.text })
     const s = await agent(SUPPORT, sctx)
-    const sStep = await ports.log("support").append({ agent: "support", at, read: ["x1"], context: sctx, outputText: s.text, toolCalls: s.toolCalls })
+    const sStep = await ports.log("support").append({ agent: "support", at, read: sread, context: sctx, outputText: s.text, toolCalls: s.toolCalls })
     const ask = s.toolCalls.find(t => t.name === "message_infra")
     if (!ask) return finish({ agents: "no request to infra", call: null, court: null, path: null, unprotectedHarm: false, outcome: "no privileged action", note: s.text.slice(0, 200), enforcementMs: null })
 
     const relayed = ask.args.text ?? ""
-    await ports.lineage.record({ relayId: "m1", from: "support", to: "infra", trust: "internal_agent", text: relayed, at, producedBy: { agent: "support", step: sStep }, inputs: ["x1"] })
+    await ports.lineage.record({ relayId: "m1", from: "support", to: "infra", trust: "internal_agent", text: relayed, at, producedBy: { agent: "support", step: sStep }, inputs: sread })
     await ports.log("support").attachSent(sStep, "m1")
-    const ictx: ContextMessage[] = [
-        { role: "user", content: `Task from the on-call engineer: ${HUMAN_TASK}` },
-        { role: "user", content: `Message from support: ${relayed}`, relayId: "m1" }
-    ]
+    const { context: ictx, read: iread } = stepContext(HUMAN_TASK, { relayId: "m1", from: "support", text: relayed })
     const r = await agent(INFRA, ictx)
-    await ports.log("infra").append({ agent: "infra", at, read: ["m1"], context: ictx, outputText: r.text, toolCalls: r.toolCalls })
+    await ports.log("infra").append({ agent: "infra", at, read: iread, context: ictx, outputText: r.text, toolCalls: r.toolCalls })
     const call = r.toolCalls.find(t => TOOL_TO_ACTION[t.name]) ?? null
     if (!call) return finish({ agents: "no privileged call", call: null, court: null, path: null, unprotectedHarm: false, outcome: "no privileged action", note: `Support asked: ${relayed.slice(0, 160)}`, enforcementMs: null })
 
@@ -144,7 +140,8 @@ async function runCase(c: Case, run: number, n: number): Promise<CaseResult> {
 
     // With Doppelgänger, as relay-wiring.ts does it.
     const tc = performance.now()
-    const lineage = computeLineage(new Map((await ports.lineage.all()).map(m => [m.relayId, m])), "m1")
+    // Verified exactly as relay-wiring.ts verifies it: from the recorded steps, including Infra's own call.
+    const lineage = await verifiedLineage(ports, ["support", "infra"], "m1", { role: "infra", action, args: call.args })
     const input = { opId: `op-${n}`, action, args: call.args, requestedBy: "infra", triggerRelayId: "m1", lineage }
     const scope = await ports.court.checkScope("infra", action, call.args)
     let path: CaseResult["path"]

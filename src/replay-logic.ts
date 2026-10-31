@@ -16,8 +16,19 @@ export const KEY_ARGS: Record<ActionName, string[]> = {
  * each agent had read. Anything outside the harness, or anything we cannot
  * account for, is a taint origin: unknown provenance is treated as outside.
  */
-export function computeLineage(messages: Map<string, MessageRecord>, triggerRelayId: string): LineageSummary {
+/** What an internal message was really produced from: the recorded step that sent it, or null if none did. */
+export type ProducerOf = (relayId: string) => { read: string[] } | null
+
+/**
+ * The history of a request, walked back from its trigger. With `producerOf`,
+ * an internal agent's message counts as produced from what its recorded step
+ * READ, not from the inputs the message claims in metadata; a message no
+ * recorded step sent is unverified (and tainted). Unknown ids are outside.
+ */
+export function computeLineage(messages: Map<string, MessageRecord>, triggerRelayId: string, producerOf?: ProducerOf): LineageSummary {
     const external = new Set<string>()
+    const human = new Set<string>()
+    const unverified = new Set<string>()
     const chain: string[] = []
     const seen = new Set<string>()
     let hops = 0
@@ -34,11 +45,24 @@ export function computeLineage(messages: Map<string, MessageRecord>, triggerRela
             external.add(id)
             return
         }
-        if (m.trust === "internal_agent") hops++
-        for (const input of m.inputs) walk(input)
+        if (m.trust === "human") {
+            human.add(id)
+            return
+        }
+        hops++
+        let inputs = m.inputs
+        if (producerOf) {
+            const step = producerOf(id)
+            if (!step) {
+                unverified.add(id)
+                return
+            }
+            inputs = step.read
+        }
+        for (const input of inputs) walk(input)
     }
     walk(triggerRelayId)
-    return { tainted: external.size > 0, externalRelayIds: [...external], chain, hops }
+    return { tainted: external.size > 0 || unverified.size > 0, externalRelayIds: [...external], chain, hops, humanRelayIds: [...human], unverified: [...unverified] }
 }
 
 /**

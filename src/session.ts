@@ -5,9 +5,13 @@
 //              "On this laptop" means a loopback connection with NO proxy
 //              headers and a localhost Host: a tunnel (cloudflared, ngrok)
 //              connects from 127.0.0.1 too, so the address alone proves nothing.
-//   oncall     decide, revoke, restore. Its token travels in the QR link. It
-//              cannot start attacks or reset. The presenter can rotate it,
+//   oncall     decide and revoke. Its token travels in the QR link. It cannot
+//              start attacks, reset, or restore authority (widening authority
+//              is the presenter's call). The presenter can rotate it,
 //              which immediately invalidates every phone that had the old one.
+//
+// The event stream needs a token too; on-call phones do not receive raw message
+// text (outside content), only Court state, decisions and evidence.
 //
 // Every command carries a single-use id (a captured request cannot be
 // replayed) and is rate-limited per role. Tokens expire, and are compared in
@@ -22,7 +26,7 @@ import type { LiveCommand } from "./live.ts"
 
 export type Role = "presenter" | "oncall"
 
-const ONCALL: LiveCommand["kind"][] = ["decide", "revoke", "restore"]
+const ONCALL: LiveCommand["kind"][] = ["decide", "revoke"]
 const RATE: Record<Role, { max: number; windowMs: number }> = { presenter: { max: 60, windowMs: 10_000 }, oncall: { max: 20, windowMs: 10_000 } }
 const COMMAND_ID = /^[A-Za-z0-9_-]{8,64}$/
 

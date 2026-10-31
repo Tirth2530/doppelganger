@@ -34,6 +34,8 @@ interface Store {
     /** The demo session token for live commands: the presenter's (from this laptop) or the on-call phone's (from the QR link). */
     token: string | null
     joinUrl: string | null
+    /** Agent Relay action lifecycle events, exactly as the SDK reported them (live runs only). */
+    relay: Extract<UiEvent, { type: "relay" }>[]
     /** The server has said what is producing events (live agents or the simulation). Until then the page claims neither. */
     announced: boolean
 }
@@ -51,6 +53,7 @@ const store: Store = {
     shadow: initialShadow(),
     remote: false,
     announced: false,
+    relay: [],
     token: null,
     joinUrl: null
 }
@@ -68,6 +71,7 @@ function dispatch(e: UiEvent): void {
         case "reset":
             store.mode = e.mode
             store.announced = true
+            store.relay = []
             store.messages = []
             store.view = null
             store.focus = null
@@ -116,6 +120,10 @@ function dispatch(e: UiEvent): void {
             break
         case "narrate":
             $("#narration").textContent = e.text
+            break
+        case "relay":
+            store.relay = [...store.relay, e].slice(-12)
+            renderRelayTrace()
             break
         case "busy":
             store.busy = e.busy
@@ -296,6 +304,18 @@ function renderLedger(): void {
 
 // ---- the Court ------------------------------------------------------------------
 
+function renderRelayTrace(): void {
+    const el = document.getElementById("relay-trace")
+    if (!el) return
+    if (!store.relay.length) {
+        el.innerHTML = `<li class="empty">${store.mode === "live" ? "No Relay action events yet." : "Simulation: no Agent Relay server, so no Relay events. Live runs show them here."}</li>`
+        return
+    }
+    el.innerHTML = store.relay
+        .map(r => `<li><code>${esc(r.phase)}</code> ${esc(r.action)} <span class="who">by ${esc(r.caller)}</span>${r.detail ? `<small>${esc(r.detail)}</small>` : ""}</li>`)
+        .join("")
+}
+
 function renderDocket(): void {
     const s = store.court
     if (!s) return
@@ -387,7 +407,7 @@ function renderOncall(): void {
     el.innerHTML = `<h1>You're the on-call engineer</h1>
         <p class="lead">Infra's privileged actions that Doppelgänger couldn't clear arrive here. Your tap decides them on the big screen.</p>
         <div class="oc-auth"><span>Authorization epoch <b>${s.epoch}</b></span><span>${scope ? `Infra may change ${esc(scope.service)} logging, up to ${esc(scope.maxLevel)}` : `<span class="revoked">Infra's authority is revoked</span>`}</span>
-        <div class="oc-row"><button class="btn danger" data-oc="revoke">Revoke Infra</button><button class="btn" data-oc="restore">Restore</button></div></div>
+        <div class="oc-row"><button class="btn danger" data-oc="revoke">Revoke Infra</button></div><p class="note">Restoring authority is the presenter's call.</p></div>
         <h2>Waiting for you</h2>
         ${
             held.length
@@ -661,6 +681,7 @@ function renderAll(): void {
     renderLedger()
     renderVerdict()
     renderDocket()
+    renderRelayTrace()
     renderCompare()
     renderDrawer()
     renderOncall()
@@ -677,7 +698,7 @@ function bootOncall(): void {
         const oc = t.closest<HTMLButtonElement>("[data-oc]")
         if (oc) void post(`do=${oc.dataset.oc}`)
     })
-    const src = new EventSource("events")
+    const src = new EventSource(`events?t=${encodeURIComponent(store.token ?? "")}`)
     src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)
     renderOncall()
 }
@@ -737,9 +758,12 @@ function boot(): void {
         store.remote = true
         $("#say-send").addEventListener("click", () => void sendAsAcme())
         $("#join-rotate").addEventListener("click", () => void rotateJoin())
-        void joinPresenterSession()
-        const src = new EventSource("events")
-        src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)
+        // The stream needs the presenter token, which this laptop's page fetches first.
+        void joinPresenterSession().then(() => {
+            if (!store.token) return dispatch({ type: "narrate", text: "This page is not on the presenter's laptop, so it has no session. Open it on the laptop, or scan the on-call QR code." })
+            const src = new EventSource(`events?t=${encodeURIComponent(store.token)}`)
+            src.onmessage = m => dispatch(JSON.parse(m.data) as UiEvent)
+        })
     } else {
         sim = new Simulation(dispatch, { seed: 31, config: store.config })
         sim.reset()

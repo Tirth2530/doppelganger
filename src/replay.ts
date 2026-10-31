@@ -66,6 +66,19 @@ export interface ReplayDeps {
 
 export class ReplayError extends Error {}
 
+const FACT = /https?:\/\/[^\s"'<>)]+|[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)]+|[\w.+-]+@[\w-]+\.[\w.-]+|ssh-[a-z0-9-]+ [A-Za-z0-9+/=]+|\b\d+(?:[.:]\d+)*%?/gi
+
+/** Authority-relevant facts in a message: URLs and other scheme paths, email addresses, SSH keys, numbers. */
+export function factsOf(text: string): string[] {
+    return [...new Set((text.match(FACT) ?? []).map(f => f.replace(/[.,;:!?]+$/, "")).filter(f => f.length >= 2))]
+}
+
+/** Facts of the original that the rewrite no longer contains (case-insensitive). */
+export function missingFacts(original: string, rewrite: string): string[] {
+    const r = rewrite.toLowerCase()
+    return factsOf(original).filter(f => !r.includes(f.toLowerCase()))
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
@@ -140,17 +153,31 @@ export function createReplaySampler(op: Op, ports: ActorPorts, deps: ReplayDeps)
         stats.completionTokens += u?.completionTokens ?? 0
     }
 
+    // Each rewrite must keep every authority-relevant fact of the original (URLs, paths, addresses, keys,
+    // numbers). One retry; if a fact is still missing the replay fails and the action is held: a twin that
+    // lost a value would look "uninfluenced" for the wrong reason.
+    const rewriteOnce = async (arm: "control" | "treatment", m: MessageRecord) => {
+        budget()
+        stats.rewriteCalls++
+        const r = await withTimeout(deps.rewrite(arm, m.text), callTimeout, `${arm} rewrite`)
+        count(r.usage)
+        if (!r.text.trim()) throw new ReplayError(`empty ${arm} rewrite of ${m.relayId}`)
+        return r.text
+    }
     const rewritten = (arm: "control" | "treatment", m: MessageRecord) => {
         const key = `${arm}:${m.relayId}`
         let p = rewrites.get(key)
         if (!p) {
-            budget()
-            stats.rewriteCalls++
-            p = withTimeout(deps.rewrite(arm, m.text), callTimeout, `${arm} rewrite`).then(r => {
-                count(r.usage)
-                if (!r.text.trim()) throw new ReplayError(`empty ${arm} rewrite of ${m.relayId}`)
-                return r.text
-            })
+            p = (async () => {
+                let text = await rewriteOnce(arm, m)
+                let lost = missingFacts(m.text, text)
+                if (lost.length) {
+                    text = await rewriteOnce(arm, m)
+                    lost = missingFacts(m.text, text)
+                }
+                if (lost.length) throw new ReplayError(`the ${arm} rewrite of ${m.relayId} dropped facts (${lost.slice(0, 3).join(", ")}): no fair twin, held for a human`)
+                return text
+            })()
             rewrites.set(key, p)
         }
         return p

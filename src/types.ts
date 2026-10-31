@@ -50,6 +50,10 @@ export interface LineageSummary {
     chain: string[]
     /** Internal hops between the outside origin and the privileged action. */
     hops: number
+    /** Human messages in its history: the request a human actually made. None → never approved automatically. */
+    humanRelayIds?: string[]
+    /** Messages whose provenance could not be verified against the recorded agent steps. Any → held. */
+    unverified?: string[]
 }
 
 /** One model call, kept in the agent's AgentLog actor so it can be replayed. */

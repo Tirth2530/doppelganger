@@ -1585,3 +1585,31 @@ table.grid.real th {
     font: 12px var(--font-mono);
     white-space: nowrap;
 }
+
+/* Agent Relay action events */
+.trace-h {
+    margin: 14px 0 6px;
+    font: 500 12px var(--font-mono);
+    color: var(--ink-2);
+}
+.trace-h small {
+    color: var(--ink-3);
+    font-weight: 400;
+}
+.relay-trace {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 12px;
+}
+.relay-trace li {
+    padding: 3px 0;
+    border-bottom: 1px solid var(--line);
+}
+.relay-trace li small {
+    display: block;
+    color: var(--ink-3);
+}
+.relay-trace .who {
+    color: var(--ink-3);
+}

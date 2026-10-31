@@ -32,7 +32,7 @@ const msg = (relayId: string, trust: MessageRecord["trust"], inputs: string[]): 
 })
 
 const MESSAGES = new Map<string, MessageRecord>(
-    [msg("m0", "external", []), msg("m1", "internal_agent", ["m0"]), msg("m2", "internal_agent", ["m0"]), msg("h1", "human", [])].map(m => [m.relayId, m])
+    [msg("m0", "external", []), msg("h1", "human", []), msg("m1", "internal_agent", ["h1", "m0"]), msg("m2", "internal_agent", ["h1", "m0"])].map(m => [m.relayId, m])
 )
 
 export const OP_SPECS: Record<string, { label: string; action: SubmitInput["action"]; args: Args; trigger: string }> = {
@@ -84,7 +84,8 @@ export const IMPLEMENTATIONS: Impl[] = [
         lineage: (messages, trigger) => {
             const m = messages.get(trigger)
             const tainted = !m || m.trust === "external"
-            return { tainted, externalRelayIds: tainted ? [trigger] : [], chain: [trigger], hops: 0 }
+            // A trusted teammate's message is taken as the human's own request.
+            return { tainted, externalRelayIds: tainted ? [trigger] : [], chain: [trigger], hops: 0, humanRelayIds: tainted ? [] : [trigger], unverified: [] }
         }
     },
     {

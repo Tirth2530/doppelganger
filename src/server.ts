@@ -23,11 +23,17 @@ export function startServer(port = Number(process.env.PORT ?? 3000), session: Se
             const local = isLocalRequest(req, srv.requestIP(req)?.address)
 
             if (url.pathname === "/events") {
+                // EventSource cannot send headers, so the token rides in the query (pages set no-referrer).
+                const role = session.roleOf(url.searchParams.get("t"))
+                if (!role) return json({ error: "missing or expired demo session" }, 401)
                 let unsubscribe = () => {}
                 const stream = new ReadableStream({
                     start(controller) {
                         const enc = new TextEncoder()
-                        unsubscribe = hub.subscribe(e => controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`)))
+                        unsubscribe = hub.subscribe(e => {
+                            if (role === "oncall" && (e.type === "message" || e.type === "agent")) return // no raw message text on phones
+                            controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`))
+                        })
                     },
                     cancel() {
                         unsubscribe()
