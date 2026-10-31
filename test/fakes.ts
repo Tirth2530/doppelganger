@@ -30,7 +30,7 @@ type Predicate = { subscribe(context: { onActionEvent(h: (e: ActionEvent) => voi
 export class FakeRelay {
     private defs = new Map<string, Def>()
     private actionListeners = new Set<(e: ActionEvent) => void>()
-    private messageListeners = new Set<(e: unknown) => Promise<void> | void>()
+    private messageListeners = new Map<string, Set<(e: unknown) => Promise<void> | void>>()
     private counter = 0
 
     registerAction(def: Def) {
@@ -48,8 +48,10 @@ export class FakeRelay {
     addListener(selector: string | Predicate, handler: (e: never) => unknown): () => void {
         const h = handler as (e: unknown) => Promise<void> | void
         if (typeof selector === "string") {
-            this.messageListeners.add(h)
-            return () => this.messageListeners.delete(h)
+            const set = this.messageListeners.get(selector) ?? new Set()
+            this.messageListeners.set(selector, set)
+            set.add(h)
+            return () => set.delete(h)
         }
         return selector.subscribe({ onActionEvent: l => (this.actionListeners.add(l), () => this.actionListeners.delete(l)) }, h)
     }
@@ -79,11 +81,14 @@ export class FakeRelay {
         return { ok: true, output }
     }
 
-    /** What the workspace does when an agent sends a message. */
+    /**
+     * What Relaycast does when an agent sends a message to another agent BY NAME: a direct message, surfaced
+     * as `dm.received` with a conversation id and NO recipient name (normalize.ts), never as message.created.
+     */
     async deliver(from: string, to: string, text: string, metadata: Record<string, unknown> = {}): Promise<string> {
         const id = `m-${++this.counter}`
-        const message = { id, messageId: id, text, from: { name: from }, target: { kind: "agent", agentName: to }, createdAt: new Date().toISOString(), metadata }
-        for (const l of this.messageListeners) await l({ type: "message.created", message, envelope: {} })
+        const message = { id, messageId: id, kind: "dm", text, from: { name: from }, conversationId: `dm-${[from, to].sort().join("-")}`, createdAt: new Date().toISOString(), metadata }
+        for (const l of this.messageListeners.get("dm.received") ?? []) await l({ type: "dm.received", message, conversationId: message.conversationId })
         return id
     }
 }

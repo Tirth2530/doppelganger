@@ -28,7 +28,7 @@ export function forOncall(e: UiEvent): UiEvent | null {
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
 
-export function startServer(port = Number(process.env.PORT ?? 3000), session: Session = createSession()) {
+export function startServer(port = Number(process.env.PORT || 3000), session: Session = createSession()) {
     const server = Bun.serve({
         port,
         idleTimeout: 0,

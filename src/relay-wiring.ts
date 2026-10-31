@@ -49,6 +49,8 @@ export interface WiringOptions {
     emit?: (event: UiEvent) => void
     /** Called once per operation that goes UNDER_REVIEW (evidence decides) or is HELD at submission (evidence only explains). */
     onReview?: (op: Op) => void
+    /** Registered agent id → name, for messages whose sender arrives as an id only. */
+    nameOfId?: Map<string, string>
     /** Verify provenance against the recorded agent steps (AgentLog). Default true; turn off only in tests of other layers. */
     verifyProvenance?: boolean
     /** Tool name → action, to match a call against the caller's recorded step. Default: the demo agents' tools. */
@@ -242,30 +244,38 @@ export function wireCourt(options: WiringOptions): () => void {
         )
     }
 
-    // Lineage from the wire. `metadata.inputs` is what the sender had read; trust is the roster's call.
-    disposers.push(
-        stream.addListener("message.created", async ({ message }: RelayMessageEvent<"message.created">) => {
-            const from = message.from.name ?? message.from.id ?? "unknown"
-            const meta = (message.metadata ?? {}) as Record<string, unknown>
-            const trust = trustOf(from, roster)
-            const t = message.target
-            const to = t?.kind === "agent" && typeof t.agentName === "string" ? t.agentName : t?.kind === "channel" && typeof t.channelName === "string" ? `#${t.channelName}` : (message.channel?.name ?? "")
-            const record: MessageRecord = {
-                relayId: message.id,
-                from,
-                to,
-                trust,
-                text: message.text ?? "",
-                at: message.createdAt ?? new Date().toISOString(),
-                producedBy: trust === "internal_agent" ? { agent: from, step: Number(meta.step ?? 0) } : null,
-                inputs: trust === "internal_agent" && Array.isArray(meta.inputs) ? meta.inputs.filter((v): v is string => typeof v === "string") : [],
-                // A case is opened only by a human message (roster humans: our own on-call client); anyone else's claim is ignored.
-                caseId: trust === "human" && typeof meta.case === "string" ? meta.case : undefined
-            }
-            await ports.lineage.record(record)
-            emit({ type: "message", message: { relayId: record.relayId, from: roleOf(from, roster), to: roleOf(to, roster), trust, summary: record.text, inputs: record.inputs, at: record.at } })
-        })
-    )
+    // Lineage from the wire: channel messages arrive as message.created, messages sent to an agent by name
+    // as dm.received (no recipient name on the event). Trust is the roster's call; inputs come from the
+    // recorded steps when verification is on. A record already written by our own human client keeps its
+    // recipient and case.
+    const seen = new Set<string>()
+    const onMessage = async ({ message }: { message: RelayMessageEvent<"message.created">["message"] }) => {
+        if (!message?.id || seen.has(message.id)) return
+        seen.add(message.id)
+        const from = message.from?.name || options.nameOfId?.get(message.from?.id ?? "") || message.from?.id || "unknown"
+        const meta = (message.metadata ?? {}) as Record<string, unknown>
+        const trust = trustOf(from, roster)
+        const prev = await ports.lineage.get(message.id)
+        const t = message.target
+        const to =
+            t?.kind === "agent" && typeof t.agentName === "string" ? t.agentName : t?.kind === "channel" && typeof t.channelName === "string" ? `#${t.channelName}` : (message.channel?.name ?? prev?.to ?? "")
+        const record: MessageRecord = {
+            relayId: message.id,
+            from,
+            to,
+            trust,
+            text: message.text ?? "",
+            at: message.createdAt ?? new Date().toISOString(),
+            producedBy: trust === "internal_agent" ? { agent: from, step: Number(meta.step ?? 0) } : null,
+            inputs: trust === "internal_agent" && Array.isArray(meta.inputs) ? meta.inputs.filter((v): v is string => typeof v === "string") : [],
+            // A case is opened only by a human message (roster humans: our own on-call client); anyone else's claim is ignored.
+            caseId: trust === "human" ? (prev?.caseId ?? (typeof meta.case === "string" ? meta.case : undefined)) : undefined
+        }
+        await ports.lineage.record(record)
+        emit({ type: "message", message: { relayId: record.relayId, from: roleOf(from, roster), to: roleOf(to, roster), trust, summary: record.text, inputs: record.inputs, at: record.at } })
+    }
+    disposers.push(stream.addListener("message.created", onMessage as never))
+    disposers.push(stream.addListener("dm.received", onMessage as never))
 
     return () => {
         for (const d of disposers.splice(0)) d()

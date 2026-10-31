@@ -35,8 +35,8 @@ export function liveReplayDeps(env: Record<string, string | undefined> = process
         agents: { support: SUPPORT, infra: INFRA },
         toolToAction: TOOL_TO_ACTION,
         sendTools: { message_infra: "text" },
-        maxModelCalls: Number(env.REPLAY_MAX_MODEL_CALLS ?? 400),
-        deadlineMs: Number(env.REPLAY_DEADLINE_MS ?? 180_000),
+        maxModelCalls: Number(env.REPLAY_MAX_MODEL_CALLS || 400),
+        deadlineMs: Number(env.REPLAY_DEADLINE_MS || 180_000),
         settings: { model: settings.model, temperature: settings.temperature, reasoningEffort: settings.reasoningEffort }
     }
 }

@@ -51,6 +51,9 @@ async function main() {
         return a as Agent
     })
     const agent = Object.fromEntries(ROLES.map((r, i) => [r, clients[i]])) as Record<(typeof ROLES)[number], Agent>
+    // A message's sender may arrive as an id only; map our registered agents' ids back to their names.
+    const nameOfId = new Map<string, string>(clients.map((c, i) => [String((c as { id?: string }).id ?? ""), name(ROLES[i])]))
+    const senderName = (from: { name?: string; id?: string } | undefined) => from?.name || nameOfId.get(from?.id ?? "") || ""
     const roster = {
         external: [name("acme-agent")],
         humans: [name("oncall")],
@@ -80,7 +83,7 @@ async function main() {
     }
 
     // Only these two agents may invoke privileged actions at all (Relay's availableTo); scopes then narrow it to Infra.
-    wireCourt({ host: agent.court, stream: relay, ports, roster, callers: [name("support"), name("infra")], emit: hub.emit, onReview: op => void review(op).catch(e => hub.emit({ type: "narrate", text: `Review of ${op.opId} failed; it stays under review for a human: ${String(e)}` })), onAttempt: attempt })
+    wireCourt({ host: agent.court, stream: relay, ports, roster, nameOfId, callers: [name("support"), name("infra")], emit: hub.emit, onReview: op => void review(op).catch(e => hub.emit({ type: "narrate", text: `Review of ${op.opId} failed; it stays under review for a human: ${String(e)}` })), onAttempt: attempt })
 
     // One case = the on-call engineer's task (a human message on Relay) + at most one outside message.
     // Support runs ONCE per case, reading both together; Infra runs on what Support sends it.
@@ -202,7 +205,7 @@ async function main() {
     console.log(`Live run ${runId}: open http://localhost:${server.port}/?mode=live on this laptop.`)
     console.log(`The on-call QR code is on the dashboard (session valid until ${new Date(session.expiresAt).toLocaleTimeString()}).`)
 
-    if (process.argv.includes("--check")) await integrationCheck({ ports, startCase, agent, port: Number(server.port), oncallToken: session.oncallToken, slack })
+    if (process.argv.includes("--check")) await integrationCheck({ ports, startCase, agent, name, port: Number(server.port), oncallToken: session.oncallToken, slack })
 }
 
 /**
@@ -215,6 +218,7 @@ async function integrationCheck(x: {
     ports: ActorPorts
     startCase: (text: string) => Promise<void>
     agent: Record<(typeof ROLES)[number], Agent>
+    name: (role: string) => string
     port: number
     oncallToken: string
     slack: ReturnType<typeof slackNotifier>
@@ -233,6 +237,7 @@ async function integrationCheck(x: {
     const settled = (o: Op) => o.state === "HELD" || o.state === "DENIED" || o.state === "EXECUTED"
     const waitForNewOp = async (before: number, ms = 240_000): Promise<Op | null> => {
         for (let t = 0; t < ms; t += 500) {
+            if (t > 0 && t % 30_000 === 0) console.log(`  … waiting for the agents (${t / 1000} s)`)
             const ops = (await ports.court.getState()).ops
             const fresh = ops.slice(before).find(settled)
             if (fresh) return fresh
@@ -254,6 +259,23 @@ async function integrationCheck(x: {
         record("the Court actor exposes explain()", "returned without the expected unknown-operation error", false)
     } catch (e) {
         record("the Court actor exposes explain()", String(e).slice(0, 120), /unknown operation/.test(String(e)))
+    }
+    // 0b. Relay delivers a direct message to the recipient's own listener (what the whole workflow rides on).
+    {
+        let got = ""
+        const off = x.agent.court.addListener("dm.received", ({ message }: RelayMessageEvent<"dm.received">) => {
+            if (message.from?.name === x.name("oncall") || !!message.from?.id) got = message.id
+        })
+        const sent = await x.agent.oncall.sendMessage({ to: x.name("court"), text: "relay delivery check" }).catch(e => ({ id: `error: ${String(e)}` }))
+        for (let t = 0; t < 15_000 && !got; t += 250) await new Promise(r => setTimeout(r, 250))
+        off()
+        record("Relay delivers a direct message to the recipient's listener", got ? `sent ${sent.id}, received ${got}` : `sent ${sent.id}; nothing arrived on the recipient's dm.received within 15 s`, !!got)
+        if (!got) {
+            console.log("  Relay events are not reaching this process: check RELAY_BASE_URL matches the workspace (cloud vs local), and that the workspace key is current.")
+            writeFileSync("live-check-results.json", JSON.stringify({ kind: "live-integration", ranAt: new Date().toISOString(), runId, steps, relayEvents, stoppedEarly: "no Relay delivery" }, null, 2))
+            console.log("\nWrote live-check-results.json: stopped early, Relay delivery failed. Nothing after this step can work.")
+            process.exit(1)
+        }
     }
     const st0 = await ports.court.getState()
     record("the Court actor carries human authorizations", `authorizations field ${Array.isArray(st0.authorizations) ? "present" : "missing (old actor deployed? regenerate, fresh COURT_ID)"}`, Array.isArray(st0.authorizations))

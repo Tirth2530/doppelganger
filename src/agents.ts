@@ -40,7 +40,7 @@ export function settingsFromEnv(env: Record<string, string | undefined> = proces
     const model = env.OPENAI_MODEL
     if (!model) throw new Error("OPENAI_MODEL is not set (pick a chat model your OpenAI key can use)")
     const temperature = env.OPENAI_TEMPERATURE !== undefined && env.OPENAI_TEMPERATURE !== "" ? Number(env.OPENAI_TEMPERATURE) : undefined
-    return { model, temperature, reasoningEffort: env.OPENAI_REASONING_EFFORT || undefined, timeoutMs: Number(env.OPENAI_TIMEOUT_MS ?? 30_000) }
+    return { model, temperature, reasoningEffort: env.OPENAI_REASONING_EFFORT || undefined, timeoutMs: Number(env.OPENAI_TIMEOUT_MS || 30_000) }
 }
 
 export class ModelError extends Error {}

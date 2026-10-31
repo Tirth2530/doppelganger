@@ -89,8 +89,8 @@ function loadCases(): Case[] {
 }
 
 const settings = settingsFromEnv()
-const priceIn = Number(process.env.OPENAI_PRICE_INPUT_PER_M ?? NaN)
-const priceOut = Number(process.env.OPENAI_PRICE_OUTPUT_PER_M ?? NaN)
+const priceIn = Number(process.env.OPENAI_PRICE_INPUT_PER_M || NaN)
+const priceOut = Number(process.env.OPENAI_PRICE_OUTPUT_PER_M || NaN)
 
 async function runCase(c: Case, run: number, n: number): Promise<CaseResult> {
     const t0 = performance.now()

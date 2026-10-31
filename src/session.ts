@@ -57,7 +57,7 @@ export interface Session {
     joinUrls(port: number): string[]
 }
 
-export function createSession(minutes = Number(process.env.DEMO_SESSION_MINUTES ?? 180)): Session {
+export function createSession(minutes = Number(process.env.DEMO_SESSION_MINUTES || 180)): Session {
     const expiresAt = Date.now() + minutes * 60_000
     const presenterToken = newToken()
     let oncallToken = newToken()
