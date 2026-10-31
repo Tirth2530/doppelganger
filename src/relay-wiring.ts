@@ -258,7 +258,9 @@ export function wireCourt(options: WiringOptions): () => void {
                 text: message.text ?? "",
                 at: message.createdAt ?? new Date().toISOString(),
                 producedBy: trust === "internal_agent" ? { agent: from, step: Number(meta.step ?? 0) } : null,
-                inputs: trust === "internal_agent" && Array.isArray(meta.inputs) ? meta.inputs.filter((v): v is string => typeof v === "string") : []
+                inputs: trust === "internal_agent" && Array.isArray(meta.inputs) ? meta.inputs.filter((v): v is string => typeof v === "string") : [],
+                // A case is opened only by a human message (roster humans: our own on-call client); anyone else's claim is ignored.
+                caseId: trust === "human" && typeof meta.case === "string" ? meta.case : undefined
             }
             await ports.lineage.record(record)
             emit({ type: "message", message: { relayId: record.relayId, from: roleOf(from, roster), to: roleOf(to, roster), trust, summary: record.text, inputs: record.inputs, at: record.at } })

@@ -243,9 +243,9 @@ export class Simulation {
         this.publish()
     }
 
-    private record(m: FeedMessage): void {
+    private record(m: FeedMessage, caseId: string): void {
         const at = new Date().toISOString()
-        this.messages.set(m.relayId, { relayId: m.relayId, from: m.from, to: m.to, trust: m.trust, text: m.summary, at, producedBy: m.trust === "internal_agent" ? { agent: m.from, step: 1 } : null, inputs: m.inputs })
+        this.messages.set(m.relayId, { relayId: m.relayId, from: m.from, to: m.to, trust: m.trust, text: m.summary, at, producedBy: m.trust === "internal_agent" ? { agent: m.from, step: 1 } : null, inputs: m.inputs, caseId: m.trust === "human" ? caseId : undefined })
         this.emit({ type: "message", message: { ...m, at } })
     }
 
@@ -269,9 +269,12 @@ export class Simulation {
             if (text) this.emit({ type: "narrate", text })
         }
         say("start")
+        // The on-call engineer's authorization for this case: Infra, webhooks logging up to debug, internal sinks.
+        const caseId = `case-${beat.beat}-${this.counter + 1}`
+        this.state = court.authorize(this.state, court.caseAuthorization(caseId, "on-call engineer", new Date().toISOString()), new Date().toISOString())
         for (const m of beat.messages) {
             await this.wait(450)
-            this.record(m)
+            this.record(m, caseId)
             if (m.to !== "infra" || m.trust !== "human") {
                 this.emit({ type: "agent", agent: m.to, status: "thinking", note: `reading ${m.relayId}` })
                 await this.wait(800)

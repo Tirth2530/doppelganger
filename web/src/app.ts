@@ -36,6 +36,8 @@ interface Store {
     joinUrl: string | null
     /** Agent Relay action lifecycle events, exactly as the SDK reported them (live runs only). */
     relay: Extract<UiEvent, { type: "relay" }>[]
+    /** Slack notification status per operation, as the server reported it. */
+    slack: Record<string, string>
     /** The server has said what is producing events (live agents or the simulation). Until then the page claims neither. */
     announced: boolean
 }
@@ -54,6 +56,7 @@ const store: Store = {
     remote: false,
     announced: false,
     relay: [],
+    slack: {},
     token: null,
     joinUrl: null
 }
@@ -124,6 +127,10 @@ function dispatch(e: UiEvent): void {
         case "relay":
             store.relay = [...store.relay, e].slice(-12)
             renderRelayTrace()
+            break
+        case "slack":
+            store.slack = { ...store.slack, [e.opId]: e.status }
+            renderDocket()
             break
         case "busy":
             store.busy = e.busy
@@ -329,7 +336,7 @@ function renderDocket(): void {
                       op.state === "HELD"
                           ? `<div class="decide"><button class="btn small good" data-decide="${esc(op.opId)}" data-approve="1" data-fix="1">Approve with the internal sink</button><button class="btn small" data-decide="${esc(op.opId)}" data-approve="1">Approve as is</button><button class="btn small danger" data-decide="${esc(op.opId)}" data-approve="0">Deny</button></div>`
                           : ""
-                  return `<li class="op tone-${t.tone}${op.opId === store.focus ? " focus" : ""}" data-focus="${esc(op.opId)}"><div class="op-top"><code>${esc(op.action)}</code><span>${esc(t.label)}</span></div><p>${esc(op.reason || "submitted")}</p>${actions}</li>`
+                  return `<li class="op tone-${t.tone}${op.opId === store.focus ? " focus" : ""}" data-focus="${esc(op.opId)}"><div class="op-top"><code>${esc(op.action)}</code><span>${esc(t.label)}</span></div><p>${esc(op.reason || "submitted")}</p>${op.caseId ? `<small class="meta">case ${esc(op.caseId)}${store.slack[op.opId] ? ` · Slack review: ${esc(store.slack[op.opId])}` : ""}</small>` : ""}${actions}</li>`
               })
               .join("")
         : `<li class="empty">No requests yet.</li>`
@@ -394,7 +401,7 @@ function renderOncall(): void {
     const s = store.court
     const el = $("#oncall")
     if (!store.token) {
-        el.innerHTML = `<h1>Doppelgänger</h1><p class="lead">This link has no demo session. Scan the QR code on the presenter's screen.</p>`
+        el.innerHTML = `<h1>Doppelgänger</h1><p class="lead">This review link carries no credential. Sign in as the on-call engineer by scanning the QR code on the presenter's screen with this phone, then open the link again.</p>`
         return
     }
     if (!s) {
@@ -413,7 +420,7 @@ function renderOncall(): void {
             held.length
                 ? held
                       .map(
-                          op => `<article class="oc-card"><code>${esc(op.action)}</code><dl>${Object.entries(op.args)
+                          op => `<article class="oc-card${op.opId === store.focus ? " focus" : ""}"><code>${esc(op.action)}</code>${op.caseId ? ` <small>case ${esc(op.caseId)}</small>` : ""}<dl>${Object.entries(op.args)
                               .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`)
                               .join("")}</dl><p>${esc(op.reason)}</p><div class="oc-buttons"><button class="btn good" data-decide="${esc(op.opId)}" data-approve="1" data-fix="1">Approve with our internal sink</button><button class="btn" data-decide="${esc(op.opId)}" data-approve="1">Approve as requested</button><button class="btn danger" data-decide="${esc(op.opId)}" data-approve="0">Deny</button></div></article>`
                       )
@@ -690,7 +697,23 @@ function renderAll(): void {
 function bootOncall(): void {
     document.documentElement.classList.add("oncall-view")
     store.remote = true
-    store.token = params.get("t")
+    // The QR link carries the on-call token; it is kept on this device so a Slack review link (which carries
+    // none) works here, and then removed from the address bar. On any other device the review link refuses.
+    const fromLink = params.get("t")
+    let saved: string | null = null
+    try {
+        if (fromLink) localStorage.setItem("doppelganger-oncall", fromLink)
+        saved = localStorage.getItem("doppelganger-oncall")
+    } catch {
+        saved = null
+    }
+    store.token = fromLink ?? saved
+    if (fromLink) {
+        const clean = new URL(location.href)
+        clean.searchParams.delete("t")
+        history.replaceState(null, "", clean.toString())
+    }
+    store.focus = params.get("op")
     document.addEventListener("click", e => {
         const t = e.target as HTMLElement
         const d = t.closest<HTMLButtonElement>("[data-decide]")

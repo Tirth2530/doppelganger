@@ -3,10 +3,12 @@
 // memory with the same Court logic, for tests and for running without the
 // actor runtime.
 
-import type { ActionName, Args, CourtState, Evidence, MessageRecord, Op, ScopeDecision, StepRecord, SubmitInput } from "./types.ts"
+import type { ActionName, Args, Authorization, CourtState, Evidence, MessageRecord, Op, ScopeDecision, StepRecord, SubmitInput } from "./types.ts"
 
 export interface CourtPort {
     getState(): Promise<CourtState>
+    /** Record a human's authorization for a case (idempotent on its id). */
+    authorize(a: Omit<Authorization, "epoch" | "createdAt">): Promise<CourtState>
     checkScope(agent: string, action: ActionName, args: Args): Promise<ScopeDecision>
     recordDenied(input: SubmitInput, reason: string): Promise<Op>
     submit(input: SubmitInput): Promise<Op>

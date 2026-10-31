@@ -10,7 +10,9 @@
 //   PENDING → DENIED                      out of scope
 //   PENDING → HELD                        in scope, but no human request in its history, or its
 //                                         provenance could not be verified: absence of an attack is not intent
-//   PENDING → APPROVED → EXECUTED         in scope, a human's request, no outside content in its history
+//   PENDING → HELD                        no active human authorization for this case covers this
+//                                         agent, operation and these exact arguments
+//   PENDING → APPROVED → EXECUTED         in scope, authorized by a human for this case, no outside content
 //   PENDING → HELD                        in scope, descends from outside content, and a key value is
 //                                         outside what the human authorized in advance: held at once
 //   PENDING → UNDER_REVIEW                in scope, descends from outside content, nothing unauthorized
@@ -21,7 +23,7 @@
 // explain() attaches explanatory evidence to an operation that is no longer
 // under review. It never changes an operation's state or the config.
 
-import type { ActionName, Args, CourtState, Evidence, LogLevel, Op, OpState, Scope, ScopeDecision, ServiceConfig, SubmitInput } from "./types.ts"
+import type { ActionName, Args, Authorization, Constraint, CourtState, Evidence, LogLevel, Op, OpState, Scope, ScopeDecision, ServiceConfig, SubmitInput } from "./types.ts"
 
 export const INTERNAL_DEFAULT_SINK = "internal://logs/webhooks"
 
@@ -37,7 +39,24 @@ export const DEFAULT_CONFIG: ServiceConfig = { service: "webhooks", logLevel: "i
 export const DEFAULT_SCOPES: Scope[] = [{ agent: "infra", action: "logging.configure", service: "webhooks", maxLevel: "debug", preauthorized: { sink: ["internal://"] } }]
 
 export function initialState(): CourtState {
-    return { epoch: 1, scopes: DEFAULT_SCOPES.map(s => ({ ...s })), config: { ...DEFAULT_CONFIG, prodAccessKeys: [] }, ops: [] }
+    return { epoch: 1, scopes: DEFAULT_SCOPES.map(s => ({ ...s })), config: { ...DEFAULT_CONFIG, prodAccessKeys: [] }, ops: [], authorizations: [] }
+}
+
+/**
+ * The on-call engineer's authorization for one support case, as the demo grants it: Infra may set
+ * webhooks logging up to debug, to an internal sink, for this case, for a limited time.
+ */
+export function caseAuthorization(caseId: string, grantedBy: string, now: string, minutes = 30): Omit<Authorization, "epoch" | "createdAt"> {
+    return {
+        id: `auth-${caseId}`,
+        caseId,
+        grantedBy,
+        task: "Debug Acme's webhook failures: raise webhooks logging up to debug, logs to an internal sink.",
+        agent: "infra",
+        action: "logging.configure",
+        constraints: { service: { oneOf: ["webhooks"] }, level: { maxLevel: "debug" }, sink: { prefixes: ["internal://"] } },
+        expiresAt: new Date(Date.parse(now) + minutes * 60_000).toISOString()
+    }
 }
 
 const LEVELS: LogLevel[] = ["error", "warn", "info", "debug", "trace"]
@@ -64,6 +83,55 @@ export function unauthorizedValue(state: CourtState, agent: string, action: Acti
         if (!prefixes.some(p => value.startsWith(p))) return { arg, value }
     }
     return null
+}
+
+// ---- human authorizations ---------------------------------------------------------
+
+/** Records a human's authorization for a case, stamped with the current epoch. Idempotent on id. */
+export function authorize(s: CourtState, a: Omit<Authorization, "epoch" | "createdAt">, now: string): CourtState {
+    const list = s.authorizations ?? []
+    if (list.some(x => x.id === a.id)) return s
+    return { ...s, authorizations: [...list, { ...a, epoch: s.epoch, createdAt: now }] }
+}
+
+function satisfies(value: string, c: Constraint): boolean {
+    if (c.oneOf && !c.oneOf.includes(value)) return false
+    if (c.prefixes && !c.prefixes.some(p => value.startsWith(p))) return false
+    if (c.maxLevel) {
+        const r = rank(value)
+        if (r < 0 || r > rank(c.maxLevel)) return false
+    }
+    return true
+}
+
+/**
+ * The authorization that covers this exact request, or why none does. Active means granted under the
+ * current epoch (a revocation ends it) and not expired; it must be for this case, this agent, this
+ * operation, and every constrained argument must satisfy its constraint.
+ */
+export function matchAuthorization(s: CourtState, caseIds: string[] | undefined, agent: string, action: ActionName, args: Args, now: string): { ok: true; auth: Authorization } | { ok: false; reason: string } {
+    const cases = [...new Set(caseIds ?? [])]
+    if (cases.length !== 1) return { ok: false, reason: cases.length ? `its history spans ${cases.length} cases` : "no human request with a case is in its history" }
+    const candidates = (s.authorizations ?? []).filter(a => a.caseId === cases[0] && a.agent === agent && a.action === action)
+    if (!candidates.length) return { ok: false, reason: `no human authorization for ${agent} to ${action} in case ${cases[0]}` }
+    let why = ""
+    for (const a of candidates) {
+        if (a.epoch !== s.epoch) {
+            why = `the authorization for case ${a.caseId} was granted under epoch ${a.epoch}; authority has since changed (epoch ${s.epoch})`
+            continue
+        }
+        if (Date.parse(now) >= Date.parse(a.expiresAt)) {
+            why = `the authorization for case ${a.caseId} expired at ${a.expiresAt}`
+            continue
+        }
+        const bad = Object.entries(a.constraints).find(([arg, c]) => !satisfies(args[arg] ?? "", c))
+        if (bad) {
+            why = `${bad[0]} "${args[bad[0]] ?? ""}" is outside what ${a.grantedBy} authorized for case ${a.caseId}`
+            continue
+        }
+        return { ok: true, auth: a }
+    }
+    return { ok: false, reason: why }
 }
 
 export interface Transition {
@@ -104,12 +172,15 @@ export function submit(s: CourtState, input: SubmitInput, now: string): Transiti
     const existing = find(s, input.opId)
     if (existing) return { state: s, op: existing, changed: false }
     let op = fresh(s, input, now)
+    let m: ReturnType<typeof matchAuthorization> = { ok: false, reason: "" }
     const scope = checkScope(s, input.requestedBy, input.action, input.args)
     if (!scope.allowed) op = stamp(op, "DENIED", `authorization: ${scope.reason}`, now)
     else if (input.lineage.unverified?.length)
         op = stamp(op, "HELD", `authorization: provenance of ${input.lineage.unverified.join(", ")} could not be verified against the recorded agent steps. Held for the on-call engineer.`, now)
     else if (!input.lineage.humanRelayIds?.length)
         op = stamp(op, "HELD", "authorization: no human request is in its history, so nothing shows a human asked for this. Held for the on-call engineer.", now)
+    else if (!(m = matchAuthorization(s, input.lineage.caseIds, input.requestedBy, input.action, input.args, now)).ok)
+        op = stamp(op, "HELD", `authorization: ${m.reason}. Held for the on-call engineer.`, now)
     else if (!input.lineage.tainted) op = { ...stamp(op, "APPROVED", "in scope, and nothing outside the company is in its history", now), epochAtApproval: s.epoch }
     else {
         const u = unauthorizedValue(s, input.requestedBy, input.action, input.args)
@@ -117,6 +188,8 @@ export function submit(s: CourtState, input: SubmitInput, now: string): Transiti
             ? stamp(op, "HELD", `authorization: ${u.arg} "${u.value}" was never authorized by a human, and it reached ${input.requestedBy} through outside content. Held for the on-call engineer.`, now)
             : stamp(op, "UNDER_REVIEW", "in scope, but its history reaches outside content: Doppelgänger is testing it", now)
     }
+    const cases = [...new Set(input.lineage.caseIds ?? [])]
+    op = { ...op, caseId: cases.length === 1 ? cases[0] : undefined, authorizationId: m.ok ? m.auth.id : undefined }
     return { state: { ...s, ops: [...s.ops, op] }, op, changed: true }
 }
 

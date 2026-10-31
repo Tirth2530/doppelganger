@@ -29,6 +29,8 @@ export interface ToolCall {
 
 /** One Agent Relay message, as the Lineage actor records it. */
 export interface MessageRecord {
+    /** For human messages: the case they open (set by the trusted human client, read from Relay metadata). */
+    caseId?: string
     relayId: string
     from: string
     to: string
@@ -54,6 +56,8 @@ export interface LineageSummary {
     humanRelayIds?: string[]
     /** Messages whose provenance could not be verified against the recorded agent steps. Any → held. */
     unverified?: string[]
+    /** Cases of the human messages in its history (from the human messages themselves). Exactly one is required for authorization. */
+    caseIds?: string[]
 }
 
 /** One model call, kept in the agent's AgentLog actor so it can be replayed. */
@@ -267,6 +271,9 @@ export interface Op {
     decidedBy: string
     createdAt: string
     history: OpHistoryEntry[]
+    /** The case its human request belongs to, and the authorization that covered it, if any. */
+    caseId?: string
+    authorizationId?: string
 }
 
 export interface Scope {
@@ -297,6 +304,34 @@ export interface CourtState {
     scopes: Scope[]
     config: ServiceConfig
     ops: Op[]
+    /** Human authorizations, one per case. Absent in Courts persisted before this field existed: treated as none. */
+    authorizations?: Authorization[]
+}
+
+/** What a value must satisfy to be covered by an authorization. */
+export interface Constraint {
+    oneOf?: string[]
+    prefixes?: string[]
+    /** For a log level: at most this. */
+    maxLevel?: string
+}
+
+/**
+ * A human's authorization for one case: who granted it, which agent may do
+ * which operation with which arguments, until when, and under which epoch.
+ * A revocation (any epoch change) ends every outstanding authorization.
+ */
+export interface Authorization {
+    id: string
+    caseId: string
+    grantedBy: string
+    task: string
+    agent: string
+    action: ActionName
+    constraints: Record<string, Constraint>
+    expiresAt: string
+    epoch: number
+    createdAt: string
 }
 
 export interface ScopeDecision {

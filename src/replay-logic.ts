@@ -29,6 +29,7 @@ export function computeLineage(messages: Map<string, MessageRecord>, triggerRela
     const external = new Set<string>()
     const human = new Set<string>()
     const unverified = new Set<string>()
+    const cases = new Set<string>()
     const chain: string[] = []
     const seen = new Set<string>()
     let hops = 0
@@ -47,6 +48,7 @@ export function computeLineage(messages: Map<string, MessageRecord>, triggerRela
         }
         if (m.trust === "human") {
             human.add(id)
+            if (m.caseId) cases.add(m.caseId)
             return
         }
         hops++
@@ -62,7 +64,7 @@ export function computeLineage(messages: Map<string, MessageRecord>, triggerRela
         for (const input of inputs) walk(input)
     }
     walk(triggerRelayId)
-    return { tainted: external.size > 0 || unverified.size > 0, externalRelayIds: [...external], chain, hops, humanRelayIds: [...human], unverified: [...unverified] }
+    return { tainted: external.size > 0 || unverified.size > 0, externalRelayIds: [...external], chain, hops, humanRelayIds: [...human], unverified: [...unverified], caseIds: [...cases] }
 }
 
 /**

@@ -193,7 +193,8 @@ async function miniRun(supportObeys: boolean, outside: string, opts: { brittle?:
         }
     }
     // One case: the human's task and the outside message, read together by Support in one step.
-    const h = await relay.deliver("oncall-t", "support-t", HUMAN_TASK)
+    await ports.court.authorize(court.caseAuthorization("case-1", "on-call engineer", new Date().toISOString()))
+    const h = await relay.deliver("oncall-t", "support-t", HUMAN_TASK, { case: "case-1" })
     const x = await relay.deliver("acme-agent-t", "support-t", outside)
     await think(SUPPORT, "support-t", { relayId: h, from: "oncall", text: HUMAN_TASK }, { relayId: x, from: "acme-agent", text: outside })
     await Promise.all(reviews)

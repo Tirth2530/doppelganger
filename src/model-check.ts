@@ -16,7 +16,7 @@ import * as court from "./court-logic.ts"
 import { computeLineage } from "./replay-logic.ts"
 import type { Args, CourtState, Evidence, LineageSummary, MessageRecord, Op, OpState, ServiceConfig, SubmitInput } from "./types.ts"
 
-const NOW = "t"
+const NOW = "2026-10-31T12:00:00.000Z"
 
 // ---- the world ---------------------------------------------------------------
 
@@ -32,7 +32,7 @@ const msg = (relayId: string, trust: MessageRecord["trust"], inputs: string[]): 
 })
 
 const MESSAGES = new Map<string, MessageRecord>(
-    [msg("m0", "external", []), msg("h1", "human", []), msg("m1", "internal_agent", ["h1", "m0"]), msg("m2", "internal_agent", ["h1", "m0"])].map(m => [m.relayId, m])
+    [msg("m0", "external", []), { ...msg("h1", "human", []), caseId: "c1" }, msg("m1", "internal_agent", ["h1", "m0"]), msg("m2", "internal_agent", ["h1", "m0"])].map(m => [m.relayId, m])
 )
 
 export const OP_SPECS: Record<string, { label: string; action: SubmitInput["action"]; args: Args; trigger: string }> = {
@@ -85,7 +85,7 @@ export const IMPLEMENTATIONS: Impl[] = [
             const m = messages.get(trigger)
             const tainted = !m || m.trust === "external"
             // A trusted teammate's message is taken as the human's own request.
-            return { tainted, externalRelayIds: tainted ? [trigger] : [], chain: [trigger], hops: 0, humanRelayIds: tainted ? [] : [trigger], unverified: [] }
+            return { tainted, externalRelayIds: tainted ? [trigger] : [], chain: [trigger], hops: 0, humanRelayIds: tainted ? [] : [trigger], unverified: [], caseIds: tainted ? [] : ["c1"] }
         }
     },
     {
@@ -209,7 +209,9 @@ const evidenceFor = (outcome: Outcome): Evidence => ({
 })
 
 function initial(): Sys {
-    return { court: court.initialState(), ghost: { revokes: 0, atSubmit: {}, atApproval: {}, executed: [], execCount: {} }, used: {}, pending: [] }
+    // The on-call engineer has authorized case c1 (Infra, webhooks logging up to debug, internal sinks).
+    const authorized = court.authorize(court.initialState(), court.caseAuthorization("c1", "oncall", NOW, 10_000), NOW)
+    return { court: authorized, ghost: { revokes: 0, atSubmit: {}, atApproval: {}, executed: [], execCount: {} }, used: {}, pending: [] }
 }
 
 export function enabled(sys: Sys, scenario: Scenario, impl: Impl): Act[] {

@@ -1613,3 +1613,14 @@ table.grid.real th {
 .relay-trace .who {
     color: var(--ink-3);
 }
+
+.op .meta {
+    display: block;
+    margin-top: 2px;
+    font: 11px var(--font-mono);
+    color: var(--ink-3);
+}
+.oc-card.focus {
+    border-color: var(--held);
+    box-shadow: 0 0 0 1px var(--held);
+}

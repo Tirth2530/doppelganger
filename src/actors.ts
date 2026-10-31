@@ -16,7 +16,7 @@
 import { Actor, type ActorContext, type ActorSocket, Emittable, Persisted } from "durable-actors"
 
 import * as court from "./court-logic.ts"
-import type { ActionName, Args, CourtState, Evidence, MessageRecord, Op, Scope, ScopeDecision, ServiceConfig, StepRecord, SubmitInput } from "./types.ts"
+import type { Authorization, ActionName, Args, CourtState, Evidence, MessageRecord, Op, Scope, ScopeDecision, ServiceConfig, StepRecord, SubmitInput } from "./types.ts"
 
 type Viewer = { name: string }
 type Incoming = { type: "ping" }
@@ -29,9 +29,10 @@ export class Court extends Actor<Viewer, Incoming, Outgoing> {
     @Persisted @Emittable scopes: Scope[] = court.DEFAULT_SCOPES.map(s => ({ ...s }))
     @Persisted @Emittable config: ServiceConfig = { ...court.DEFAULT_CONFIG, prodAccessKeys: [] }
     @Persisted @Emittable ops: Op[] = []
+    @Persisted @Emittable authorizations: Authorization[] = []
 
     private snapshot(): CourtState {
-        return { epoch: this.epoch, scopes: this.scopes, config: this.config, ops: this.ops }
+        return { epoch: this.epoch, scopes: this.scopes, config: this.config, ops: this.ops, authorizations: this.authorizations ?? [] }
     }
 
     /** Reassigns every field so @Persisted saves it and @Emittable streams it. */
@@ -40,6 +41,13 @@ export class Court extends Actor<Viewer, Incoming, Outgoing> {
         this.scopes = s.scopes
         this.config = s.config
         this.ops = s.ops
+        this.authorizations = s.authorizations ?? []
+    }
+
+    /** A human's authorization for one case. */
+    async authorize(a: Omit<Authorization, "epoch" | "createdAt">): Promise<CourtState> {
+        this.adopt(court.authorize(this.snapshot(), a, now()))
+        return this.snapshot()
     }
 
     async getState(): Promise<CourtState> {

@@ -5,8 +5,10 @@ import { computeLineage, traceValues } from "../src/replay-logic.ts"
 import type { Evidence, LineageSummary, MessageRecord, SubmitInput } from "../src/types.ts"
 
 const T = "2026-10-31T12:00:00Z"
-const CLEAN: LineageSummary = { tainted: false, externalRelayIds: [], chain: ["m1", "h1"], hops: 1, humanRelayIds: ["h1"], unverified: [] }
-const TAINTED: LineageSummary = { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "h1", "m0"], hops: 1, humanRelayIds: ["h1"], unverified: [] }
+const CLEAN: LineageSummary = { tainted: false, externalRelayIds: [], chain: ["m1", "h1"], hops: 1, humanRelayIds: ["h1"], unverified: [], caseIds: ["c1"] }
+const TAINTED: LineageSummary = { tainted: true, externalRelayIds: ["m0"], chain: ["m1", "h1", "m0"], hops: 1, humanRelayIds: ["h1"], unverified: [], caseIds: ["c1"] }
+/** A Court where the on-call engineer has authorized case c1. */
+const S0 = () => court.authorize(court.initialState(), court.caseAuthorization("c1", "oncall", T), T)
 
 const input = (over: Partial<SubmitInput> = {}): SubmitInput => ({
     opId: "op1",
@@ -36,21 +38,28 @@ describe("instant hold: a deterministic authorization reason, no evidence needed
     const EXT = { service: "webhooks", level: "debug", sink: "https://collector.acme-debug.io/ingest" }
 
     test("tainted + a value the human never authorized in advance: HELD at submission", () => {
-        const t = court.submit(court.initialState(), input({ args: EXT }), T)
+        const t = court.submit(S0(), input({ args: EXT }), T)
         expect(t.op.state).toBe("HELD")
         expect(t.op.reason).toMatch(/^authorization: sink/)
     })
 
     test("not every outside value is unauthorized: a tainted request with a pre-authorized value goes to review", () => {
-        expect(court.submit(court.initialState(), input(), T).op.state).toBe("UNDER_REVIEW")
+        expect(court.submit(S0(), input(), T).op.state).toBe("UNDER_REVIEW")
     })
 
-    test("the same unauthorized value asked for directly by the human is approved: the hold is about outside provenance", () => {
-        expect(court.submit(court.initialState(), input({ args: EXT, lineage: CLEAN }), T).op.state).toBe("APPROVED")
+    test("a clean history is not enough: a value outside the human's authorization is held even with no outside content", () => {
+        const op = court.submit(S0(), input({ args: EXT, lineage: CLEAN }), T).op
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/sink .* is outside what oncall authorized for case c1/)
+    })
+
+    test("the same value is approved when the human's authorization covers it", () => {
+        const s = court.authorize(court.initialState(), { ...court.caseAuthorization("c1", "oncall", T), constraints: { sink: { oneOf: [EXT.sink] } } }, T)
+        expect(court.submit(s, input({ args: EXT, lineage: CLEAN }), T).op).toMatchObject({ state: "APPROVED", caseId: "c1", authorizationId: "auth-c1" })
     })
 
     test("evidence cannot release an instant hold: verdicts are no-ops, explain attaches evidence and changes nothing else", () => {
-        let s = court.submit(court.initialState(), input({ args: EXT }), T).state
+        let s = court.submit(S0(), input({ args: EXT }), T).state
         s = court.verdict(s, "op1", evidence("robust"), 1, T).state
         expect(s.ops[0].state).toBe("HELD")
         const before = s
@@ -63,13 +72,13 @@ describe("instant hold: a deterministic authorization reason, no evidence needed
     })
 
     test("explain refuses an operation still under review: only a fenced verdict may act on it", () => {
-        const s = court.submit(court.initialState(), input(), T).state
+        const s = court.submit(S0(), input(), T).state
         expect(court.explain(s, "op1", evidence("robust")).changed).toBe(false)
         expect(court.explain(s, "op1", evidence("robust")).op.state).toBe("UNDER_REVIEW")
     })
 
     test("a held action still needs current authority when the human approves it", () => {
-        let s = court.submit(court.initialState(), input({ args: EXT }), T).state
+        let s = court.submit(S0(), input({ args: EXT }), T).state
         s = court.revoke(s, "infra")
         const t = court.decide(s, "op1", true, "oncall", null, T)
         expect(t.op.state).not.toBe("APPROVED")
@@ -77,8 +86,41 @@ describe("instant hold: a deterministic authorization reason, no evidence needed
     })
 })
 
+describe("human authorization records", () => {
+    const OK = { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" }
+    const submit = (s: ReturnType<typeof S0>, over: Partial<SubmitInput> = {}, now = T) => court.submit(s, input({ args: OK, lineage: CLEAN, ...over }), now).op
+
+    test("covered: approved, and the op records which authorization covered it", () => {
+        expect(submit(S0())).toMatchObject({ state: "APPROVED", authorizationId: "auth-c1" })
+    })
+    test("no authorization at all: held", () => expect(submit(court.initialState()).state).toBe("HELD"))
+    test("another case's authorization does not cover it", () => expect(submit(S0(), { lineage: { ...CLEAN, caseIds: ["c2"] } }).state).toBe("HELD"))
+    test("a history spanning two cases is not covered", () => expect(submit(S0(), { lineage: { ...CLEAN, caseIds: ["c1", "c2"] } }).state).toBe("HELD"))
+    test("another agent is not covered", () => expect(submit(S0(), { requestedBy: "support" }).state).toBe("DENIED"))
+    test("a level above the authorized one is not covered", () => {
+        const wide = { ...S0(), scopes: [{ ...S0().scopes[0], maxLevel: "trace" }] }
+        expect(submit(wide, { args: { ...OK, level: "trace" } })).toMatchObject({ state: "HELD" })
+    })
+    test("expired: held", () => {
+        const later = new Date(Date.parse(T) + 31 * 60_000).toISOString()
+        const op = submit(S0(), {}, later)
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/expired/)
+    })
+    test("a revocation ends outstanding authorizations, and restoring authority does not revive them", () => {
+        const s = court.restoreScopes(court.revoke(S0(), "infra"))
+        const op = submit(s)
+        expect(op.state).toBe("HELD")
+        expect(op.reason).toMatch(/epoch/)
+    })
+    test("authorize is idempotent on its id", () => {
+        const s = S0()
+        expect(court.authorize(s, court.caseAuthorization("c1", "someone else", T), T)).toBe(s)
+    })
+})
+
 describe("scope", () => {
-    const s = court.initialState()
+    const s = S0()
     test("in scope", () => expect(court.checkScope(s, "infra", "logging.configure", input().args).allowed).toBe(true))
     test("unknown agent", () => expect(court.checkScope(s, "support", "logging.configure", input().args).allowed).toBe(false))
     test("never-authorized action", () => expect(court.checkScope(s, "infra", "access.grant", { service: "webhooks" }).allowed).toBe(false))
@@ -88,18 +130,18 @@ describe("scope", () => {
 
 describe("lifecycle", () => {
     test("out of scope is denied at submission", () => {
-        const t = court.submit(court.initialState(), input({ action: "access.grant", args: { service: "webhooks", environment: "production", public_key: "k" } }), T)
+        const t = court.submit(S0(), input({ action: "access.grant", args: { service: "webhooks", environment: "production", public_key: "k" } }), T)
         expect(t.op.state).toBe("DENIED")
         expect(t.op.reason).toMatch(/^authorization:/)
     })
 
     test("clean lineage is approved at submission; tainted lineage goes under review", () => {
-        expect(court.submit(court.initialState(), input({ lineage: CLEAN }), T).op.state).toBe("APPROVED")
-        expect(court.submit(court.initialState(), input(), T).op.state).toBe("UNDER_REVIEW")
+        expect(court.submit(S0(), input({ lineage: CLEAN }), T).op.state).toBe("APPROVED")
+        expect(court.submit(S0(), input(), T).op.state).toBe("UNDER_REVIEW")
     })
 
     test("submit is idempotent", () => {
-        const a = court.submit(court.initialState(), input(), T)
+        const a = court.submit(S0(), input(), T)
         const b = court.submit(a.state, input(), T)
         expect(b.changed).toBe(false)
         expect(b.state.ops).toHaveLength(1)
@@ -119,7 +161,7 @@ describe("lifecycle", () => {
 
 describe("fencing", () => {
     test("a revoke during review makes the verdict stale", () => {
-        let s = court.submit(court.initialState(), input(), T).state
+        let s = court.submit(S0(), input(), T).state
         const epoch = s.epoch
         s = court.revoke(s, "infra")
         const t = court.verdict(s, "op1", evidence("robust"), epoch, T)
@@ -128,14 +170,14 @@ describe("fencing", () => {
     })
 
     test("revoke then restore cannot slip a stale verdict through, whatever epoch the worker reports", () => {
-        let s = court.submit(court.initialState(), input(), T).state
+        let s = court.submit(S0(), input(), T).state
         s = court.restoreScopes(court.revoke(s, "infra"))
         const t = court.verdict(s, "op1", evidence("robust"), s.epoch, T) // the worker claims the new epoch
         expect(t.op.state).toBe("DENIED")
     })
 
     test("an approval is fenced again at commit", () => {
-        let s = court.submit(court.initialState(), input({ lineage: CLEAN }), T).state
+        let s = court.submit(S0(), input({ lineage: CLEAN }), T).state
         s = court.revoke(s, "infra")
         const t = court.commit(s, "op1", T)
         expect(t.op.state).toBe("DENIED")
@@ -143,7 +185,7 @@ describe("fencing", () => {
     })
 
     test("a human's corrected arguments are re-checked against scope, and only they reach the config", () => {
-        let s = court.submit(court.initialState(), input(), T).state
+        let s = court.submit(S0(), input(), T).state
         s = court.verdict(s, "op1", evidence("influenced"), s.epoch, T).state
         const bad = court.decide(s, "op1", true, "oncall", { level: "trace" }, T)
         expect(bad.op.state).toBe("DENIED")
@@ -153,7 +195,7 @@ describe("fencing", () => {
     })
 
     test("commit applies exactly once", () => {
-        let s = court.submit(court.initialState(), input({ action: "logging.configure", lineage: CLEAN }), T).state
+        let s = court.submit(S0(), input({ action: "logging.configure", lineage: CLEAN }), T).state
         s = court.commit(s, "op1", T).state
         const again = court.commit(s, "op1", T)
         expect(again.changed).toBe(false)
@@ -174,7 +216,7 @@ describe("lineage", () => {
 
     test("taint is traced through a trusted hop", () => {
         const m = new Map([msg("m0", "external"), msg("m1", "internal_agent", ["m0"])].map(r => [r.relayId, r]))
-        expect(computeLineage(m, "m1")).toEqual({ tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1, humanRelayIds: [], unverified: [] })
+        expect(computeLineage(m, "m1")).toEqual({ tainted: true, externalRelayIds: ["m0"], chain: ["m1", "m0"], hops: 1, humanRelayIds: [], unverified: [], caseIds: [] })
     })
 
     test("with recorded steps, provenance comes from what the step READ, not what the message claims", () => {
@@ -189,14 +231,14 @@ describe("lineage", () => {
         const m = new Map([msg("h1", "human"), msg("m1", "internal_agent", ["h1"])].map(r => [r.relayId, r]))
         const lineage = computeLineage(m, "m1", () => null)
         expect(lineage).toMatchObject({ tainted: true, unverified: ["m1"] })
-        expect(court.submit(court.initialState(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op.state).toBe("HELD")
+        expect(court.submit(S0(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op.state).toBe("HELD")
     })
 
     test("no human request in its history: held, even with no outside content (absence of an attack is not intent)", () => {
         const m = new Map([msg("m1", "internal_agent", [])].map(r => [r.relayId, r]))
         const lineage = computeLineage(m, "m1")
         expect(lineage).toMatchObject({ tainted: false, humanRelayIds: [] })
-        const op = court.submit(court.initialState(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op
+        const op = court.submit(S0(), input({ lineage, args: { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" } }), T).op
         expect(op.state).toBe("HELD")
         expect(op.reason).toMatch(/no human request/)
     })

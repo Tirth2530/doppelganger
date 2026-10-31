@@ -153,3 +153,15 @@ describe("credentials stay out of logs, late joiners learn the mode", () => {
         expect(seen).toHaveLength(2000)
     })
 })
+
+describe("what a phone may see", () => {
+    test("court events keep what the reviewer needs, shorten credential-like arguments, and drop certificates", async () => {
+        const { forOncall } = await import("../src/server.ts")
+        const op = { opId: "o", action: "access.grant", args: { service: "webhooks", public_key: `ssh-ed25519 ${"A".repeat(100)}` }, evidence: { certificate: { x: 1 }, valueProvenance: [{ v: 1 }] } }
+        const out = forOncall({ type: "court", state: { epoch: 1, scopes: [], config: {}, ops: [op] } } as never) as unknown as { state: { ops: { args: Record<string, string>; evidence: { certificate: unknown; valueProvenance: unknown[] } }[] } }
+        expect(out.state.ops[0].args.service).toBe("webhooks")
+        expect(out.state.ops[0].args.public_key).not.toContain("A".repeat(40))
+        expect(out.state.ops[0].evidence.certificate).toBeNull()
+        for (const type of ["message", "agent", "relay", "experiment"]) expect(forOncall({ type } as never)).toBeNull()
+    })
+})

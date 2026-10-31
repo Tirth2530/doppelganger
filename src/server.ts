@@ -9,8 +9,22 @@
 
 import { readFileSync } from "node:fs"
 
+import type { UiEvent } from "./events.ts"
 import { hub, parseCommand } from "./live.ts"
+import { redactArgs } from "./slack.ts"
 import { createSession, isLocalRequest, type Session } from "./session.ts"
+
+/**
+ * What a phone may see. No raw message text (outside content), no agent notes, no Relay event details, and
+ * credential-like arguments shortened. The Court state it needs to decide stays.
+ */
+export function forOncall(e: UiEvent): UiEvent | null {
+    if (e.type === "message" || e.type === "agent" || e.type === "relay" || e.type === "experiment") return null
+    if (e.type === "court") return { ...e, state: { ...e.state, ops: e.state.ops.map(o => ({ ...o, args: redactArgs(o.args), evidence: o.evidence ? { ...o.evidence, certificate: null, valueProvenance: [] } : null })) } }
+    if (e.type === "invoke") return { ...e, args: redactArgs(e.args) }
+    if (e.type === "shadow") return { ...e, state: { ...e.state, config: { ...e.state.config, prodAccessKeys: e.state.config.prodAccessKeys.map(k => redactArgs({ key: k }).key) }, executed: [] } }
+    return e
+}
 
 const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } })
 
@@ -31,8 +45,8 @@ export function startServer(port = Number(process.env.PORT ?? 3000), session: Se
                     start(controller) {
                         const enc = new TextEncoder()
                         unsubscribe = hub.subscribe(e => {
-                            if (role === "oncall" && (e.type === "message" || e.type === "agent")) return // no raw message text on phones
-                            controller.enqueue(enc.encode(`data: ${JSON.stringify(e)}\n\n`))
+                            const out = role === "oncall" ? forOncall(e) : e
+                            if (out) controller.enqueue(enc.encode(`data: ${JSON.stringify(out)}\n\n`))
                         })
                     },
                     cancel() {

@@ -13,6 +13,10 @@ export function memoryCourt(): CourtPort & { state: CourtState } {
         async getState() {
             return port.state
         },
+        async authorize(a) {
+            port.state = court.authorize(port.state, a, now())
+            return port.state
+        },
         async checkScope(agent, action, args) {
             return court.checkScope(port.state, agent, action, args)
         },

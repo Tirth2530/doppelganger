@@ -6,6 +6,7 @@
 import { hub } from "./live.ts"
 import { startServer } from "./server.ts"
 import { Simulation } from "./sim.ts"
+import { slackNotifier } from "./slack.ts"
 
 const sim = new Simulation(hub.emit, { seed: 31 })
 
@@ -35,6 +36,16 @@ hub.onCommand(async c => {
 })
 
 const { server, session } = startServer()
+// Slack works in the simulation too, for rehearsal; every message is marked [SIMULATION].
+const slack = slackNotifier({
+    webhookUrl: process.env.SLACK_WEBHOOK_URL,
+    publicUrl: process.env.PUBLIC_URL || `http://localhost:${server.port}`,
+    mode: "simulation",
+    onStatus: (opId, status) => hub.emit({ type: "slack", opId, status })
+})
+hub.subscribe(e => {
+    if (e.type === "court") slack.observe(e.state)
+})
 sim.reset()
 // The on-call link carries a credential, so it is never printed: the QR code on the dashboard holds it.
 console.log(`Doppelgänger (SIMULATED agents): open http://localhost:${server.port}/?mode=live on this laptop.`)

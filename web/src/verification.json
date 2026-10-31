@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T20:22:50.881Z",
+  "generatedAt": "2026-10-31T20:42:59.438Z",
   "invariants": [
     {
       "id": "authority",
@@ -104,41 +104,41 @@
       "title": "Doppelgänger Court",
       "description": "The Court as shipped: full lineage, epoch fencing at verdict and at commit, state guards on every transition, serialized by its Durable Actor.",
       "mutant": false,
-      "states": 50231,
-      "transitions": 759242,
-      "depth": 10,
-      "ms": 3296,
+      "states": 66242,
+      "transitions": 918539,
+      "depth": 11,
+      "ms": 4460,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 24381,
-          "transitions": 386522,
-          "depth": 9,
-          "ms": 1888,
+          "states": 29201,
+          "transitions": 455726,
+          "depth": 10,
+          "ms": 2246,
           "broken": []
         },
         {
           "scenario": "laundered-retries",
-          "states": 129,
-          "transitions": 1185,
+          "states": 118,
+          "transitions": 1083,
           "depth": 6,
           "ms": 4,
           "broken": []
         },
         {
           "scenario": "revocation-race",
-          "states": 24078,
-          "transitions": 342319,
-          "depth": 10,
-          "ms": 1300,
+          "states": 34498,
+          "transitions": 418298,
+          "depth": 11,
+          "ms": 2067,
           "broken": []
         },
         {
           "scenario": "instant-hold",
-          "states": 1643,
-          "transitions": 29216,
-          "depth": 7,
-          "ms": 104,
+          "states": 2425,
+          "transitions": 43432,
+          "depth": 8,
+          "ms": 143,
           "broken": []
         }
       ],
@@ -175,50 +175,48 @@
       "title": "Trust the last hop",
       "description": "Checks only who sent the triggering message. A request relayed by a trusted teammate looks clean.",
       "mutant": true,
-      "states": 892,
-      "transitions": 13742,
-      "depth": 7,
-      "ms": 55,
+      "states": 25970,
+      "transitions": 352651,
+      "depth": 10,
+      "ms": 1407,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 327,
-          "transitions": 6099,
-          "depth": 6,
-          "ms": 24,
+          "states": 7620,
+          "transitions": 130302,
+          "depth": 9,
+          "ms": 521,
           "broken": [
             "laundering"
           ]
         },
         {
           "scenario": "laundered-retries",
-          "states": 8,
-          "transitions": 37,
-          "depth": 3,
-          "ms": 0,
+          "states": 29,
+          "transitions": 232,
+          "depth": 5,
+          "ms": 1,
           "broken": [
             "laundering"
           ]
         },
         {
           "scenario": "revocation-race",
-          "states": 497,
-          "transitions": 6814,
-          "depth": 7,
-          "ms": 27,
+          "states": 15896,
+          "transitions": 178685,
+          "depth": 10,
+          "ms": 718,
           "broken": [
             "laundering"
           ]
         },
         {
           "scenario": "instant-hold",
-          "states": 60,
-          "transitions": 792,
-          "depth": 5,
-          "ms": 4,
-          "broken": [
-            "laundering"
-          ]
+          "states": 2425,
+          "transitions": 43432,
+          "depth": 8,
+          "ms": 167,
+          "broken": []
         }
       ],
       "invariants": [
@@ -266,47 +264,47 @@
       "title": "No fence at commit",
       "description": "Applies an approved operation without checking that authorization is unchanged since the approval.",
       "mutant": true,
-      "states": 588148,
-      "transitions": 8444773,
-      "depth": 12,
-      "ms": 38162,
+      "states": 1354897,
+      "transitions": 17445170,
+      "depth": 13,
+      "ms": 81009,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 279013,
-          "transitions": 4328812,
-          "depth": 10,
-          "ms": 20052,
+          "states": 609118,
+          "transitions": 8974279,
+          "depth": 11,
+          "ms": 41701,
           "broken": [
             "authority"
           ]
         },
         {
           "scenario": "laundered-retries",
-          "states": 506,
-          "transitions": 4517,
+          "states": 458,
+          "transitions": 4088,
           "depth": 7,
-          "ms": 16,
+          "ms": 14,
           "broken": [
             "authority"
           ]
         },
         {
           "scenario": "revocation-race",
-          "states": 300185,
-          "transitions": 3966526,
-          "depth": 12,
-          "ms": 17528,
+          "states": 723835,
+          "transitions": 8093850,
+          "depth": 13,
+          "ms": 37405,
           "broken": [
             "authority"
           ]
         },
         {
           "scenario": "instant-hold",
-          "states": 8444,
-          "transitions": 144918,
-          "depth": 9,
-          "ms": 566,
+          "states": 21486,
+          "transitions": 372953,
+          "depth": 10,
+          "ms": 1889,
           "broken": [
             "authority"
           ]
@@ -367,25 +365,25 @@
       "title": "Trust the worker's epoch",
       "description": "Fences verdicts with the epoch the replay worker reports instead of the one the Court stamped at submission.",
       "mutant": true,
-      "states": 1262599,
-      "transitions": 12625490,
-      "depth": 13,
-      "ms": 62463,
+      "states": 2227274,
+      "transitions": 19147402,
+      "depth": 14,
+      "ms": 105575,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 338226,
-          "transitions": 3534730,
-          "depth": 11,
-          "ms": 19813,
+          "states": 495909,
+          "transitions": 4726606,
+          "depth": 12,
+          "ms": 27399,
           "broken": [
             "revocation"
           ]
         },
         {
           "scenario": "laundered-retries",
-          "states": 305,
-          "transitions": 2228,
+          "states": 292,
+          "transitions": 2160,
           "depth": 7,
           "ms": 8,
           "broken": [
@@ -394,20 +392,20 @@
         },
         {
           "scenario": "revocation-race",
-          "states": 890673,
-          "transitions": 8549582,
-          "depth": 13,
-          "ms": 40505,
+          "states": 1689544,
+          "transitions": 13739936,
+          "depth": 14,
+          "ms": 75307,
           "broken": [
             "revocation"
           ]
         },
         {
           "scenario": "instant-hold",
-          "states": 33395,
-          "transitions": 538950,
+          "states": 41529,
+          "transitions": 678700,
           "depth": 11,
-          "ms": 2137,
+          "ms": 2861,
           "broken": []
         }
       ],
@@ -471,47 +469,47 @@
       "title": "Unserialized verdict (@Interleave)",
       "description": "The verdict handler checks the epoch, awaits, then writes. Another call can run in between, as @Interleave allows.",
       "mutant": true,
-      "states": 86727,
-      "transitions": 1213047,
-      "depth": 12,
-      "ms": 5028,
+      "states": 94589,
+      "transitions": 1238452,
+      "depth": 13,
+      "ms": 5351,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 28778,
-          "transitions": 469095,
-          "depth": 10,
-          "ms": 2163,
+          "states": 33150,
+          "transitions": 526939,
+          "depth": 11,
+          "ms": 2320,
           "broken": [
             "revocation"
           ]
         },
         {
           "scenario": "laundered-retries",
-          "states": 294,
-          "transitions": 2248,
+          "states": 240,
+          "transitions": 1877,
           "depth": 8,
-          "ms": 7,
+          "ms": 8,
           "broken": [
             "revocation"
           ]
         },
         {
           "scenario": "revocation-race",
-          "states": 56012,
-          "transitions": 712488,
-          "depth": 12,
-          "ms": 2733,
+          "states": 58774,
+          "transitions": 666204,
+          "depth": 13,
+          "ms": 2868,
           "broken": [
             "revocation"
           ]
         },
         {
           "scenario": "instant-hold",
-          "states": 1643,
-          "transitions": 29216,
-          "depth": 7,
-          "ms": 125,
+          "states": 2425,
+          "transitions": 43432,
+          "depth": 8,
+          "ms": 155,
           "broken": []
         }
       ],
@@ -575,17 +573,17 @@
       "title": "No state guard on callbacks",
       "description": "Verdict, human and commit handlers act on an operation whatever state it is in.",
       "mutant": true,
-      "states": 92930,
-      "transitions": 1283960,
+      "states": 98496,
+      "transitions": 1321218,
       "depth": 11,
-      "ms": 6102,
+      "ms": 8140,
       "scenarios": [
         {
           "scenario": "all-interleaved",
-          "states": 39361,
-          "transitions": 585490,
+          "states": 42125,
+          "transitions": 631115,
           "depth": 10,
-          "ms": 2945,
+          "ms": 4603,
           "broken": [
             "transitions",
             "authority"
@@ -593,8 +591,8 @@
         },
         {
           "scenario": "laundered-retries",
-          "states": 174,
-          "transitions": 1479,
+          "states": 163,
+          "transitions": 1377,
           "depth": 7,
           "ms": 5,
           "broken": [
@@ -605,10 +603,10 @@
         },
         {
           "scenario": "revocation-race",
-          "states": 49812,
-          "transitions": 636452,
+          "states": 51470,
+          "transitions": 608278,
           "depth": 11,
-          "ms": 2914,
+          "ms": 3012,
           "broken": [
             "transitions",
             "once",
@@ -617,10 +615,10 @@
         },
         {
           "scenario": "instant-hold",
-          "states": 3583,
-          "transitions": 60539,
+          "states": 4738,
+          "transitions": 80448,
           "depth": 9,
-          "ms": 238,
+          "ms": 520,
           "broken": [
             "transitions",
             "once",

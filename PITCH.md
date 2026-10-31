@@ -27,7 +27,7 @@ The Court traces how the request formed across agents. If its history touches ou
 - **Durable Actors (Terse):** the Court, each run's Lineage and each agent's step log are actors. The Court's one-call-at-a-time execution is a safety property: our model checker shows that allowing `@Interleave` lets a revocation slip between "check" and "write" in four steps.
 - **The evidence layer:** a placebo-controlled, three-arm counterfactual experiment decided by a paired sign-test e-process. Its false-"influenced" rate is at most α at any stopping round (Ville's inequality; the exact worst case is 2.46% at α = 5%). It stops early once no verdict is reachable, and every verdict comes with a certificate the browser recomputes.
 - **The replay engine:** for a held request, it re-runs every agent between the outside message and the privileged call from their recorded contexts, with the same prompts, tools and model settings, swapping only the outside message. Replays are read-only: they never send a Relay message, invoke an action or touch the Court. Any failure, timeout or budget overrun holds the action for a human.
-- **Verification:** an exhaustive model checker runs the real Court through every interleaving of requests, verdicts, human decisions, revocations, duplicates and retries. 50,231 states, all 6 invariants hold, and 5 deliberately broken Courts are caught.
+- **Verification:** an exhaustive model checker runs the real Court through every interleaving of requests, verdicts, human decisions, revocations, duplicates and retries. 66,242 states, all 6 invariants hold, and 5 deliberately broken Courts are caught.
 - **Multiplayer, safely:** a short-lived demo session with least-privilege roles. The phone can approve, deny and revoke but can't start attacks, and the Court re-checks authority on every human decision.
 - **OpenAI** models power the live agents. Built in TypeScript on Bun, with a real-time dashboard.
 
@@ -67,28 +67,25 @@ If the live agents aren't working by recording time, record shots 2–5 with `bu
 
 ## Round 2: 2-minute live demo
 
-**Before you're called:** start the run, open the dashboard full-screen, and **ask one judge to scan the QR code now**. They're your on-call engineer.
+**Before you're called:** start the run (`bun run live`, or `bun run demo` if live failed its check), open the dashboard full-screen, have the on-call phone signed in with the QR code, and Slack open on that phone. Check the badge says LIVE (or SIMULATED, and say so).
 
 | time | do | say |
 |---|---|---|
-| 0:00 | point at the strip | "One customer message can become an order to a privileged AI agent. Same request, same agents, two systems. Watch." |
-| 0:08 | click **2** | "Acme suggests where logs should go. Support relays it in its own words, and Infra asks to change the destination. Without us, on the left, it just ran: logs now go to Acme. With us, on the right, it's held instantly: a destination no human authorized, arriving through Acme." |
-| 0:30 | point at the twin and arms | "Then we replay the agents with Acme's request reworded, and with it removed. Removed, the destination changes. It was Acme's idea. That's the explanation your on-call engineer sees." |
-| 0:45 | to the judge: "Your phone just got it." | "Approve with our internal sink…" *(the judge taps)* "…and only the correction ran. That was your phone, live, through the same Court." |
-| 1:00 | click **4** | "We don't make humans approve everything. Acme just sent logs here, every twin keeps the change, and it's approved with no one interrupted." |
-| 1:15 | click **5** | "Authority revoked mid-review: the evidence says yes, but the Court's epoch fence says no. Stale verdicts never execute." |
-| 1:30 | scroll to the chart | "On our simulated suite, we're the only approach that stops every attack class without a human on every action." |
-| 1:42 | open *Unserialized verdict* | "The Court is a Durable Actor. We model-checked it, and turning off serialization breaks revocation in four steps." |
-| 1:55 | — | "Doppelgänger. And if you'd like, write your own message as Acme and we'll run it." |
+| 0:00 | point at the strip | "AI agents now hand work to each other. One customer message can become an order to a privileged agent that no human gave. Same request, same agents, two systems." |
+| 0:15 | click **2** | "Acme's agent writes to our Support agent. Support coordinates with Infra over Agent Relay, and Infra invokes `logging.configure`, a typed Relay action the Court owns." |
+| 0:30 | point at the compare strip and the Relay events | "Without us, on the left, the tool just ran: logs now go to Acme. With us, Relay hands the action to the Court first. The on-call engineer authorized internal sinks for this case; this destination came from Acme. Held, before any side effect." |
+| 0:50 | point at the provenance column | "The Court didn't take anyone's word for where this came from: it rebuilt the history from what each agent actually read." |
+| 1:05 | show the phone: the Slack notification | "Slack just told the on-call engineer. The link carries no credential; this phone is signed in." *(tap Review action, then Approve with our internal sink)* |
+| 1:20 | point at the docket | "The Court re-checked her authority and executed only the correction. Approving twice, or after a revocation, does nothing." |
+| 1:30 | click **3** (live) or **4** (simulated) | "Ordinary logs from Acme: the twins keep the change with or without anything Acme asked, and it's covered by her authorization. Executed, nobody interrupted." |
+| 1:45 | — | "Relay is the action pathway, a Durable Actor keeps every decision consistent, and counterfactual replay explains what came from outside. Doppelgänger: AI teams act on their own, with only the authority humans gave them." |
 
-The last line invites the strongest question a judge can ask. If live agents work, type their message into **"Send as Acme's agent"**.
-
----
+Twin replays take time with real models. If the evidence for case 2 is still running at 0:50, say "the explanation is still replaying; the hold didn't wait for it", which is true and is the point.
 
 ## Pre-demo checklist
 
 - `bun install && bun test`
-- **Integration proof:** `bun run live:check -- --memory` (then without `--memory` if actors are up). It must show the attack held, the correction executed, the retry deduplicated, the legitimate case executed, and Relay events observed.
+- **Integration proof:** `bun run live:check -- --memory` (then without `--memory` if actors are up). It fails unless it observes every mandatory step: the Court's current interface, the caller seen as Infra, the attack held or denied, Relay action events, the Slack notification (if configured), the on-call correction through the authenticated server, no double execution, no new operation on a re-sent invocation, the legitimate case executed, and revocation enforced.
 - **Real-model proof:** `bun run live-eval:smoke` (one attack, one legitimate case), then `bun run live-eval --repeat 3` if time and budget allow, then `bun run build:web` so the dashboard's *Real-model evaluation* panel shows it. Quote counts ("stopped 6 of 6 harmful attack runs; cleared 9 of 12 legitimate runs"), never percentages, and only what the file says.
 - Live: `relay init`, `durable-actors dev && bun run generate` (or `--memory`), then `OPENAI_API_KEY=… OPENAI_MODEL=… RELAY_WORKSPACE_KEY=… bun run live`
 - Fallback with no keys: `bun run demo`. The phone flow works the same, and the agents are labelled simulated.

@@ -20,7 +20,7 @@ The runner here calls our interface (`src/ports.ts`), and the model checker
 verifies our Court logic (`src/court-logic.ts`). So deploy **our** actors:
 
 1. Copy `src/actors.ts`, `src/court-logic.ts`, `src/types.ts` into the actors project (or point it at this repo), then `bun run check` there.
-2. The Court actor gained one method, `explain(opId, evidence)` (attaches evidence to an operation that is not under review; never changes state). Regenerate the client after copying.
+2. The Court actor gained `explain(opId, evidence)` (attaches evidence to an operation not under review; never changes state), `authorize(authorization)` (the on-call engineer's authorization for a case), and a persisted `authorizations` field. Regenerate the client after copying; `bun run live:check` fails at its first step if the deployed actor lacks them.
 3. `bunx durable-actors dev` (local control plane at `http://127.0.0.1:7100`), then `bunx durable-actors generate` so `generated/` exists here (`bun run generate`).
 4. Use a fresh Court id: `COURT_ID=webhooks-<anything>`. The id `doppelganger-demo` is already revoked in that database; do not reuse it, and do not delete persisted state.
 5. Or skip actors entirely for the demo: `bun run live --memory` runs the same Court logic in memory.
@@ -72,6 +72,10 @@ Checked by typechecking this repo against the 15.0.1 package source (`packages/s
 - The handler context has no invocation id (`ActionContext` = caller, workspaceId, messaging, emit), so idempotency keys are derived from the request.
 
 Still unverified: all of it against a running Relaycast server. `bun run live:check` is the test.
+
+## Slack
+
+Create an incoming webhook (Slack app → Incoming Webhooks → Add New Webhook to Workspace, pick the channel), set `SLACK_WEBHOOK_URL`, and set `PUBLIC_URL` to the address phones use (your tunnel) so the review link opens. Sign the on-call phone in with the QR code once; the Slack link then works on that phone and nowhere else.
 
 ## Order of work for the live run
 

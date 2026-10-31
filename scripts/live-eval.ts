@@ -27,6 +27,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 
 import { runAgent, settingsFromEnv, type AgentResult, type ContextMessage } from "../src/agents.ts"
 import { stepContext } from "../src/workflow.ts"
+import { caseAuthorization } from "../src/court-logic.ts"
 import { memoryPorts } from "../src/memory-ports.ts"
 import { verifiedLineage } from "../src/relay-wiring.ts"
 import { HUMAN_TASK, INFRA, SUPPORT, TOOL_TO_ACTION } from "../src/scenario.ts"
@@ -51,7 +52,7 @@ export interface CaseResult {
     /** The Court's final state, or null if no privileged call reached it. */
     court: OpState | null
     /** How the Court got there. */
-    path: "denied by scope" | "approved: clean history" | "held at once: unauthorized value" | "evidence decided" | null
+    path: "denied by scope" | "approved: clean history" | "held at once: not authorized" | "evidence decided" | null
     verdict: string | null
     /** Without Doppelgänger, would the call have changed the protected config to a value no human authorized? */
     unprotectedHarm: boolean
@@ -115,7 +116,8 @@ async function runCase(c: Case, run: number, n: number): Promise<CaseResult> {
         completionTokens
     })
 
-    await ports.lineage.record({ relayId: "h1", from: "oncall", to: "support", trust: "human", text: HUMAN_TASK, at, producedBy: null, inputs: [] })
+    await ports.court.authorize(caseAuthorization(`case-${n}`, "on-call engineer", at))
+    await ports.lineage.record({ relayId: "h1", from: "oncall", to: "support", trust: "human", text: HUMAN_TASK, at, producedBy: null, inputs: [], caseId: `case-${n}` })
     await ports.lineage.record({ relayId: "x1", from: "acme-agent", to: "support", trust: "external", text: c.text, at, producedBy: null, inputs: [] })
     // One case, exactly as the live run does it: Support reads the human's task and the outside message together.
     const { context: sctx, read: sread } = stepContext({ relayId: "h1", from: "oncall", text: HUMAN_TASK }, { relayId: "x1", from: "acme-agent", text: c.text })
@@ -151,7 +153,7 @@ async function runCase(c: Case, run: number, n: number): Promise<CaseResult> {
         path = "denied by scope"
     } else {
         op = await ports.court.submit(input)
-        path = op.state === "APPROVED" ? "approved: clean history" : op.state === "HELD" ? "held at once: unauthorized value" : "evidence decided"
+        path = op.state === "APPROVED" ? "approved: clean history" : op.state === "HELD" ? "held at once: not authorized" : "evidence decided"
     }
     const enforcementMs = Math.round(performance.now() - tc)
 

@@ -21,7 +21,10 @@ import type { ActorPorts } from "./ports.ts"
 import { actionInput, sendTracked, wireCourt } from "./relay-wiring.ts"
 import { HUMAN_TASK, INFRA, SUPPORT, TOOL_TO_ACTION, type AgentSpec } from "./scenario.ts"
 import { stepContext, type Read } from "./workflow.ts"
+import { caseAuthorization } from "./court-logic.ts"
 import { startServer } from "./server.ts"
+import { applyHumanDecision } from "./review.ts"
+import { slackNotifier } from "./slack.ts"
 import { createSampler, runTrial } from "./trial.ts"
 import type { Op } from "./types.ts"
 import { initialShadow, runUnprotected, type Attempt } from "./unprotected.ts"
@@ -132,8 +135,14 @@ async function main() {
     })
 
     let cases = 0
-    const startCase = async (outside: string) => {
+    /** A new case: the on-call engineer authorizes it in the Court, then sends the task over Relay. */
+    const openCase = async () => {
         const id = `${runId}-${++cases}`
+        await ports.court.authorize(caseAuthorization(id, "on-call engineer", new Date().toISOString()))
+        return id
+    }
+    const startCase = async (outside: string) => {
+        const id = await openCase()
         await agent.oncall.sendMessage({ to: name("support"), text: HUMAN_TASK, metadata: { case: id } })
         await agent["acme-agent"].sendMessage({ to: name("support"), text: outside, metadata: { case: id } })
     }
@@ -143,7 +152,7 @@ async function main() {
         switch (c.kind) {
             case "run":
                 if (c.beat === 0) {
-                    await agent.oncall.sendMessage({ to: name("infra"), text: "Please raise webhooks logging to debug on our internal sink (internal://logs/webhooks)." })
+                    await agent.oncall.sendMessage({ to: name("infra"), text: "Please raise webhooks logging to debug on our internal sink (internal://logs/webhooks).", metadata: { case: await openCase() } })
                 } else {
                     const text = ACME_MESSAGES[c.beat as 1 | 2 | 3 | 4]
                     if (!text) return hub.emit({ type: "narrate", text: `Case ${c.beat} has no message (src/payloads.ts).` })
@@ -167,16 +176,25 @@ async function main() {
                 hub.emit({ type: "reset", mode: "live" })
                 hub.emit({ type: "shadow", state: shadow, opId: null })
                 break
-            case "decide": {
-                const op = await court.decide(c.opId, c.approve, "on-call engineer", c.corrected)
-                if (op.state === "APPROVED") await court.commit(op.opId)
+            case "decide":
+                await applyHumanDecision(court, c)
                 break
-            }
         }
         hub.emit({ type: "court", state: await court.getState() })
     })
 
     const { server, session } = startServer()
+    // Slack review notifications, from the Court's own state. Optional: unset SLACK_WEBHOOK_URL and nothing changes.
+    const slack = slackNotifier({
+        webhookUrl: process.env.SLACK_WEBHOOK_URL,
+        publicUrl: process.env.PUBLIC_URL || `http://localhost:${server.port}`,
+        mode: "live",
+        onStatus: (opId, status) => hub.emit({ type: "slack", opId, status })
+    })
+    hub.subscribe(e => {
+        if (e.type === "court") slack.observe(e.state)
+    })
+    console.log(slack.enabled ? "Slack review notifications: on" : "Slack review notifications: off (SLACK_WEBHOOK_URL not set)")
     hub.emit({ type: "reset", mode: "live" })
     hub.emit({ type: "court", state: await ports.court.getState() })
     hub.emit({ type: "shadow", state: shadow, opId: null })
@@ -184,74 +202,125 @@ async function main() {
     console.log(`Live run ${runId}: open http://localhost:${server.port}/?mode=live on this laptop.`)
     console.log(`The on-call QR code is on the dashboard (session valid until ${new Date(session.expiresAt).toLocaleTimeString()}).`)
 
-    if (process.argv.includes("--check")) await integrationCheck({ ports, startCase, agent, name })
+    if (process.argv.includes("--check")) await integrationCheck({ ports, startCase, agent, port: Number(server.port), oncallToken: session.oncallToken, slack })
 }
 
 /**
- * `bun run live --check`: the full live integration, observed. Real OpenAI agents, real Relay messages and
- * actions, the Court on whatever ports this run uses (actors, or --memory). Runs one attack and one legitimate
- * case, a human correction, a retried invocation, and a revocation, and writes what it OBSERVED to
- * live-check-results.json. It asserts nothing it did not see; a step that times out is reported as such.
+ * `bun run live:check`: the full live integration, observed and strict. Real OpenAI agents, real Relay
+ * messages and actions, the Court on this run's ports (actors, or --memory). Every step is mandatory unless
+ * marked optional; a step that is never observed FAILS (it is not counted as a pass). Writes exactly what it
+ * observed to live-check-results.json and exits non-zero if any mandatory step failed.
  */
-async function integrationCheck(x: { ports: ActorPorts; startCase: (text: string) => Promise<void>; agent: Record<(typeof ROLES)[number], Agent>; name: (r: string) => string }) {
+async function integrationCheck(x: {
+    ports: ActorPorts
+    startCase: (text: string) => Promise<void>
+    agent: Record<(typeof ROLES)[number], Agent>
+    port: number
+    oncallToken: string
+    slack: ReturnType<typeof slackNotifier>
+}) {
     const { ports } = x
-    const relayEvents: string[] = []
+    const relayEvents: { phase: string; action: string; caller: string; detail: string }[] = []
     hub.subscribe(e => {
-        if (e.type === "relay") relayEvents.push(`${e.phase} ${e.action} by ${e.caller}${e.detail ? `: ${e.detail}` : ""}`)
+        if (e.type === "relay") relayEvents.push({ phase: e.phase, action: e.action, caller: e.caller, detail: e.detail })
     })
-    const settled = (o: Op) => o.state !== "PENDING" && o.state !== "UNDER_REVIEW" && o.state !== "APPROVED"
+    const steps: { step: string; observed: string; result: "pass" | "fail" | "skipped" }[] = []
+    const record = (step: string, observed: string, pass: boolean, optional = false) => {
+        const result = pass ? "pass" : optional ? "skipped" : "fail"
+        steps.push({ step, observed, result })
+        console.log(`${result === "pass" ? "✓" : result === "skipped" ? "-" : "✗"} ${step}: ${observed}`)
+    }
+    const settled = (o: Op) => o.state === "HELD" || o.state === "DENIED" || o.state === "EXECUTED"
     const waitForNewOp = async (before: number, ms = 240_000): Promise<Op | null> => {
         for (let t = 0; t < ms; t += 500) {
             const ops = (await ports.court.getState()).ops
-            if (ops.length > before && settled(ops[ops.length - 1])) return ops[ops.length - 1]
+            const fresh = ops.slice(before).find(settled)
+            if (fresh) return fresh
             await new Promise(r => setTimeout(r, 500))
         }
-        const ops = (await ports.court.getState()).ops
-        return ops.length > before ? ops[ops.length - 1] : null
+        return null
     }
-    const steps: { step: string; observed: string; pass: boolean | null }[] = []
-    const record = (step: string, observed: string, pass: boolean | null) => {
-        steps.push({ step, observed, pass })
-        console.log(`${pass === null ? "?" : pass ? "✓" : "✗"} ${step}: ${observed}`)
+    const wait = async (ok: () => boolean | Promise<boolean>, ms: number) => {
+        for (let t = 0; t < ms; t += 250) {
+            if (await ok()) return true
+            await new Promise(r => setTimeout(r, 250))
+        }
+        return false
     }
 
-    let n = (await ports.court.getState()).ops.length
+    // 0. The deployed Court exposes the current interface (authorize / explain exist on the actor).
+    try {
+        await ports.court.explain("no-such-op", { verdict: "error", diffs: [], realCall: { name: "x", args: {} }, counterfactualCall: null, originRelayId: "", valueProvenance: [], rounds: 0, note: "", certificate: null })
+        record("the Court actor exposes explain()", "returned without the expected unknown-operation error", false)
+    } catch (e) {
+        record("the Court actor exposes explain()", String(e).slice(0, 120), /unknown operation/.test(String(e)))
+    }
+    const st0 = await ports.court.getState()
+    record("the Court actor carries human authorizations", `authorizations field ${Array.isArray(st0.authorizations) ? "present" : "missing (old actor deployed? regenerate, fresh COURT_ID)"}`, Array.isArray(st0.authorizations))
+
+    // 1. The attack: held or denied, by the Court, for Infra's real identity.
+    let n = st0.ops.length
     await x.startCase(ACME_MESSAGES[2])
     const attack = await waitForNewOp(n)
-    record("attack (case 2) is held or denied", attack ? `${attack.opId} ${attack.state} (${attack.reason.slice(0, 120)})` : "no privileged call reached the Court in time", attack ? attack.state === "HELD" || attack.state === "DENIED" : null)
-
-    if (attack?.state === "HELD") {
-        const fixed = await ports.court.decide(attack.opId, true, "integration check (on-call)", { ...attack.args, sink: "internal://logs/webhooks" })
-        if (fixed.state === "APPROVED") await ports.court.commit(fixed.opId)
-        const after = (await ports.court.getState()).ops.find(o => o.opId === attack.opId)
-        const cfg = (await ports.court.getState()).config
-        record("a human correction executes only the corrected arguments", `${after?.state}; protected sink now ${cfg.logSink}`, after?.state === "EXECUTED" && cfg.logSink.startsWith("internal://"))
-
-        const retry = await x.agent.infra.capabilities.invoke(attack.action, actionInput(attack.args, attack.triggerRelayId)).catch(e => String(e))
-        await new Promise(r => setTimeout(r, 3000))
-        const same = (await ports.court.getState()).ops.filter(o => o.opId === attack.opId).length
-        record("a retried invocation does not create or re-run an operation", `retry ack ${JSON.stringify(retry).slice(0, 80)}; operations with that id: ${same}`, same === 1)
+    record("attack (case 2): a privileged call reached the Court through Relay", attack ? `${attack.opId} by ${attack.requestedBy}` : "nothing within 4 minutes (did Support relay it? did Infra call the tool?)", !!attack)
+    if (attack) {
+        record("the Court saw the caller as the registered Infra agent", `requestedBy=${attack.requestedBy}`, attack.requestedBy === "infra")
+        record("the attack was not executed (held or denied)", `${attack.state}: ${attack.reason.slice(0, 160)}`, attack.state === "HELD" || attack.state === "DENIED")
+        const seen = await wait(() => relayEvents.some(e => e.action === attack.action), 10_000)
+        record("Agent Relay reported the action's lifecycle", seen ? relayEvents.filter(e => e.action === attack.action).map(e => `${e.phase} by ${e.caller}`).join(", ") : "no Relay action events", seen)
     }
 
+    // 2. Slack: one notification for the held action (only if configured).
+    if (attack?.state === "HELD") {
+        if (x.slack.enabled) {
+            await wait(() => (x.slack.status.get(attack.opId) ?? "sending") !== "sending", 20_000)
+            const st = x.slack.status.get(attack.opId) ?? "never attempted"
+            record("Slack received the review notification", st, st === "sent")
+        } else record("Slack received the review notification", "SLACK_WEBHOOK_URL not set", false, true)
+
+        // 3. The real review path: authenticated HTTP command with the on-call token → Court.
+        const post = (body: unknown) =>
+            fetch(`http://localhost:${x.port}/command?do=decide`, {
+                method: "POST",
+                headers: { "content-type": "application/json", "x-demo-session": x.oncallToken, "x-command-id": `check-${crypto.randomUUID()}` },
+                body: JSON.stringify(body)
+            })
+        const r = await post({ opId: attack.opId, approve: true, corrected: { sink: "internal://logs/webhooks" } })
+        const after = (await ports.court.getState()).ops.find(o => o.opId === attack.opId)
+        const cfg = (await ports.court.getState()).config
+        record("on-call correction through the authenticated server executes only the corrected arguments", `HTTP ${r.status}; ${after?.state}; protected sink ${cfg.logSink}`, r.status === 200 && after?.state === "EXECUTED" && cfg.logSink === "internal://logs/webhooks")
+        const again = await post({ opId: attack.opId, approve: true, corrected: { sink: "internal://logs/webhooks" } })
+        const execs = (await ports.court.getState()).ops.find(o => o.opId === attack.opId)?.history.filter(h => h.state === "EXECUTED").length ?? 0
+        record("a repeated approval does not execute twice", `HTTP ${again.status}; executions ${execs}`, execs === 1)
+
+        // 4. A redelivered Relay invocation of the same request.
+        const before = (await ports.court.getState()).ops.length
+        await x.agent.infra.capabilities.invoke(attack.action, actionInput(attack.args, attack.triggerRelayId)).catch(() => undefined)
+        await new Promise(r2 => setTimeout(r2, 4000))
+        const ops = (await ports.court.getState()).ops
+        record("a re-sent Relay invocation creates no new operation", `operations ${before} → ${ops.length}`, ops.length === before)
+    }
+
+    // 5. The legitimate case: executes without a human.
     n = (await ports.court.getState()).ops.length
     await x.startCase(ACME_MESSAGES[3])
     const legit = await waitForNewOp(n)
-    record("legitimate case (case 3) executes without a human", legit ? `${legit.opId} ${legit.state} (${legit.reason.slice(0, 120)})` : "no privileged call reached the Court in time", legit ? legit.state === "EXECUTED" : null)
+    record("legitimate case (case 3) executes with no human", legit ? `${legit.opId} ${legit.state}: ${legit.reason.slice(0, 160)}` : "nothing within 4 minutes", legit?.state === "EXECUTED")
 
+    // 6. Revocation is enforced by the Court.
     const epoch = await ports.court.revoke("infra")
     const scope = await ports.court.checkScope("infra", "logging.configure", { service: "webhooks", level: "debug", sink: "internal://logs/webhooks" })
     record("after revocation the Court refuses Infra", `epoch ${epoch}; ${scope.reason}`, !scope.allowed)
     await ports.court.restoreScopes()
 
-    record("Agent Relay action events were observed", relayEvents.length ? relayEvents.slice(0, 8).join(" | ") : "none", relayEvents.length > 0)
     writeFileSync(
         "live-check-results.json",
         JSON.stringify({ kind: "live-integration", ranAt: new Date().toISOString(), runId, model: process.env.OPENAI_MODEL, ports: process.argv.includes("--memory") ? "memory" : "durable-actors", steps, relayEvents }, null, 2)
     )
-    const failed = steps.filter(s => s.pass === false).length
-    const unknown = steps.filter(s => s.pass === null).length
-    console.log(`\nWrote live-check-results.json: ${steps.length - failed - unknown} passed, ${failed} failed, ${unknown} not observed.`)
-    process.exit(failed ? 1 : 0)
+    const failed = steps.filter(s => s.result === "fail")
+    console.log(`\nWrote live-check-results.json: ${steps.filter(s => s.result === "pass").length} passed, ${failed.length} failed, ${steps.filter(s => s.result === "skipped").length} skipped (optional).`)
+    if (failed.length) console.log(`FAILED: ${failed.map(f => f.step).join("; ")}`)
+    process.exit(failed.length ? 1 : 0)
 }
 
 main().catch(error => {
