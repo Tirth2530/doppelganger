@@ -26,6 +26,7 @@ The Court traces how the request formed across agents. If its history touches ou
 - **Agent Relay:** the Court joins the workspace as an agent and owns the privileged actions. Agents invoke them over Relay, and the Relay SDK calls the Court as each action's policy hook before any handler runs, so a refusal completes the invocation with an error and emits the SDK's own `action.denied`. Provenance rides in message metadata, and the lineage of every request is rebuilt from `message.created`, with trust taken from a roster, never from a message.
 - **Durable Actors (Terse):** the Court, each run's Lineage and each agent's step log are actors. The Court's one-call-at-a-time execution is a safety property: our model checker shows that allowing `@Interleave` lets a revocation slip between "check" and "write" in four steps.
 - **The evidence layer:** a placebo-controlled, three-arm counterfactual experiment decided by a paired sign-test e-process. Its false-"influenced" rate is at most α at any stopping round (Ville's inequality; the exact worst case is 2.46% at α = 5%). It stops early once no verdict is reachable, and every verdict comes with a certificate the browser recomputes.
+- **The replay engine:** for a held request, it re-runs every agent between the outside message and the privileged call from their recorded contexts, with the same prompts, tools and model settings, swapping only the outside message. Replays are read-only: they never send a Relay message, invoke an action or touch the Court. Any failure, timeout or budget overrun holds the action for a human.
 - **Verification:** an exhaustive model checker runs the real Court through every interleaving of requests, verdicts, human decisions, revocations, duplicates and retries. 48,588 states, all 6 invariants hold, and 5 deliberately broken Courts are caught.
 - **Multiplayer, safely:** a short-lived demo session with least-privilege roles. The phone can approve, deny and revoke but can't start attacks, and the Court re-checks authority on every human decision.
 - **OpenAI** models power the live agents. Built in TypeScript on Bun, with a real-time dashboard.
@@ -110,7 +111,7 @@ That's our strongest baseline. It stops everything, at the cost of a human on ev
 The link carries a short-lived on-call token. Its role can decide, deny and revoke, but it can't start attacks or reset, and the server checks that on every command. Even then, the Court re-checks authority on every human decision, and every commit is fenced by the authorization epoch, so a stale approval can never override a revocation. That's one of the model-checked invariants.
 
 **"Doesn't replaying agents cost a fortune?"**
-Only privileged actions whose history touches outside content are replayed. A tested action costs about 60 short model calls, and we stop the moment no verdict is reachable, which cuts the most expensive case by about 40% without loosening the error bound.
+Only privileged actions whose history touches outside content are replayed. In the simulated suite a tested action costs about 60 short model calls (live runs show the measured calls and tokens in the evidence drawer), and we stop the moment no verdict is reachable, which cuts the most expensive case by about 40% without loosening the error bound.
 
 **"How do you know the stats are right?"**
 The influence test is an e-process: its false-alarm rate is at most α at any stopping round, by Ville's inequality. We compute the exact worst case by dynamic programming (2.46% at α = 5%) and check it by Monte Carlo in the tests. Every verdict ships with a certificate the browser recomputes. We claim a bounded error under stated assumptions, not "guaranteed safe".
@@ -123,6 +124,9 @@ Authority lives in the chain between agents, and Relay is where that chain is. T
 
 **"What would make it fail?"**
 An outsider's goal disguised as a natural subtask of the human's request can survive neutralization. Scope limits and human review stay as the backstop, and we say so.
+
+**"Is the agent identity real?"**
+A caller's role comes only from the agents this run registered on Relay. An unknown caller, even one named "infra", gets no authority, and identity written into the request is ignored. The actions are also restricted on Relay itself to our two agents.
 
 **"Was this built today?"**
 Yes. All code is from today (see the git history). We brainstormed the idea beforehand, which the rules allow.

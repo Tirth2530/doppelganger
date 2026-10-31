@@ -1,5 +1,5 @@
 // A fake Agent Relay that keeps the real SDK's semantics: the policy runs before
-// the handler, a refusal emits `action.denied` and never reaches the handler,
+// the handler (after `availableTo`, as the SDK facade does), a refusal emits `action.denied` and never reaches the handler,
 // facade handlers take one `{ input, agent, ctx }` object, typed predicates
 // subscribe through `subscribe(context, handler)`, and message events carry
 // the SDK's `RelayMessage` shape (discriminated `target`).
@@ -10,6 +10,7 @@ type Decision = { allowed: boolean; reason?: string }
 
 interface Def {
     name: string
+    availableTo?: string[]
     policy?: (input: unknown, ctx: Ctx) => Decision | Promise<Decision>
     handler: (args: { input: unknown; agent: Caller; ctx: Ctx }) => unknown
 }
@@ -59,8 +60,13 @@ export class FakeRelay {
         if (!def) return { ok: false, error: { code: "not_found", message: name } }
         const at = new Date(Date.now() + this.counter++).toISOString()
         const fire = (e: ActionEvent) => this.actionListeners.forEach(l => l(e))
-        if (def.policy) {
-            const d = await def.policy(input, { caller })
+        // As facade.ts registerFacadeAction: availableTo is checked first, then the policy.
+        const policy = async (): Promise<Decision> => {
+            if (def.availableTo && !def.availableTo.includes(caller.name)) return { allowed: false, reason: `${caller.name} is not permitted to call ${name}.` }
+            return def.policy ? def.policy(input, { caller }) : { allowed: true }
+        }
+        if (def.policy || def.availableTo) {
+            const d = await policy()
             if (!d.allowed) {
                 fire({ type: "action.denied", action: name, caller, input, reason: d.reason, at })
                 await new Promise(r => setTimeout(r, 0))

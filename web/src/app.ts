@@ -34,6 +34,8 @@ interface Store {
     /** The demo session token for live commands: the presenter's (from this laptop) or the on-call phone's (from the QR link). */
     token: string | null
     joinUrl: string | null
+    /** The server has said what is producing events (live agents or the simulation). Until then the page claims neither. */
+    announced: boolean
 }
 
 const store: Store = {
@@ -48,6 +50,7 @@ const store: Store = {
     beat: null,
     shadow: initialShadow(),
     remote: false,
+    announced: false,
     token: null,
     joinUrl: null
 }
@@ -64,6 +67,7 @@ function dispatch(e: UiEvent): void {
     switch (e.type) {
         case "reset":
             store.mode = e.mode
+            store.announced = true
             store.messages = []
             store.view = null
             store.focus = null
@@ -120,6 +124,13 @@ function dispatch(e: UiEvent): void {
     }
 }
 
+/** Measured cost of a real replay (live runs only). The simulation reports none, because it has none. */
+function realCost(): string {
+    const r = focusOp()?.evidence?.replay
+    if (!r) return store.mode === "live" ? "" : `<p class="note">Simulated twins: no model was called.</p>`
+    return `<dl class="kv"><dt>measured</dt><dd>${r.modelCalls} agent replays + ${r.rewriteCalls} rewrites${r.model ? ` on ${esc(r.model)}` : ""}</dd><dt>tokens</dt><dd>${r.promptTokens.toLocaleString()} in · ${r.completionTokens.toLocaleString()} out</dd><dt>replay time</dt><dd>${(r.ms / 1000).toFixed(1)} s of model time</dd></dl>`
+}
+
 // ---- header ---------------------------------------------------------------------
 
 function renderAuthority(): void {
@@ -127,7 +138,8 @@ function renderAuthority(): void {
     if (!s) return
     $("#epoch strong").textContent = String(s.epoch)
     const mode = $("#mode")
-    mode.textContent = store.mode === "live" ? "live: agents on Agent Relay" : store.remote ? "simulated agents, served from this laptop" : "simulation"
+    mode.textContent =
+        store.remote && !store.announced ? "connecting to this laptop…" : store.mode === "live" ? "LIVE · real agents on Agent Relay" : store.remote ? "SIMULATED agents, served from this laptop" : "SIMULATION in this browser"
     mode.dataset.mode = store.mode
     // The "write your own message" box needs live agents; it hides when they are simulated.
     document.documentElement.classList.toggle("live", store.mode === "live")
@@ -414,7 +426,7 @@ function renderDrawer(): void {
     } else samples.innerHTML = `<p class="empty">${v?.verdict === "running" ? "Twins are replaying…" : "No experiment for this request."}</p>`
 
     $("#cost").innerHTML = v
-        ? `<dl class="kv"><dt>rounds</dt><dd>${v.rounds} of at most ${v.maxRounds}</dd><dt>model calls</dt><dd>${v.calls}</dd><dt>stopped because</dt><dd>${v.stoppedFor === "futility" ? "no verdict was reachable" : v.stoppedFor === "evidence" ? "the evidence was in" : v.stoppedFor === "budget" ? "the round budget ran out" : "still running"}</dd></dl><p class="note">Only privileged actions whose history touches outside content are replayed. Everything else costs nothing.</p>`
+        ? `<dl class="kv"><dt>rounds</dt><dd>${v.rounds} of at most ${v.maxRounds}</dd><dt>model calls</dt><dd>${v.calls}</dd><dt>stopped because</dt><dd>${v.stoppedFor === "futility" ? "no verdict was reachable" : v.stoppedFor === "evidence" ? "the evidence was in" : v.stoppedFor === "budget" ? "the round budget ran out" : "still running"}</dd></dl>${realCost()}<p class="note">Only privileged actions whose history touches outside content are replayed. Everything else costs nothing.</p>`
         : `<p class="empty">No replays for this request.</p>`
 
     const proofs = $("#proofs")
@@ -606,7 +618,6 @@ function renderAll(): void {
 
 function bootOncall(): void {
     document.documentElement.classList.add("oncall-view")
-    store.mode = "live"
     store.remote = true
     store.token = params.get("t")
     document.addEventListener("click", e => {
@@ -671,9 +682,8 @@ function boot(): void {
     })
 
     if (params.get("mode") === "live") {
-        store.mode = "live"
+        // Remote: what is producing events (real agents or the simulation) comes from the server's reset event, never from the URL.
         store.remote = true
-        document.documentElement.classList.add("live")
         $("#say-send").addEventListener("click", () => void sendAsAcme())
         $("#join-rotate").addEventListener("click", () => void rotateJoin())
         void joinPresenterSession()

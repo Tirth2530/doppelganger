@@ -36,6 +36,6 @@ hub.onCommand(async c => {
 
 const { server, session } = startServer()
 sim.reset()
-console.log(`Doppelgänger (simulated agents): open http://localhost:${server.port}/?mode=live on this laptop`)
-console.log(`On-call phone link (valid until ${new Date(session.expiresAt).toLocaleTimeString()}):`)
-for (const url of session.joinUrls(server.port)) console.log(`  ${url}`)
+// The on-call link carries a credential, so it is never printed: the QR code on the dashboard holds it.
+console.log(`Doppelgänger (SIMULATED agents): open http://localhost:${server.port}/?mode=live on this laptop.`)
+console.log(`The on-call QR code is on the dashboard (session valid until ${new Date(session.expiresAt).toLocaleTimeString()}).`)

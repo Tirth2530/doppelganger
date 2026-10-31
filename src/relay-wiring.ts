@@ -44,6 +44,8 @@ export interface WiringOptions {
     emit?: (event: UiEvent) => void
     /** Called once per operation that goes UNDER_REVIEW: start the experiment here. */
     onReview?: (op: Op) => void
+    /** Agent names allowed to invoke the actions (Relay's availableTo). Default: the internal roster agents. */
+    callers?: string[]
     /** Called for every privileged request, refused or not: what an agent tried to do. */
     onAttempt?: (attempt: { opId: string; action: ActionName; args: Args; requestedBy: string; triggerRelayId: string }) => void
 }
@@ -79,12 +81,30 @@ function trustOf(name: string, roster: Roster): Trust {
     return "internal_agent"
 }
 
+/** Display name for a sender or recipient (never used for authority). */
 const roleOf = (name: string, roster: Roster) => roster.roles[name] ?? name
 
-function split(input: unknown): { args: Args; trigger: string } {
+/**
+ * The role a caller ACTS AS: only a registered, internal roster agent has one.
+ * Authority never comes from action input, from a message, or from a name that
+ * merely looks like a role. An unknown caller (a runtime placeholder such as
+ * "node", a stray workspace agent, an outsider, a human client) has none, so
+ * every scope check fails closed for it.
+ */
+export function callerRole(name: string | undefined, roster: Roster): string | null {
+    if (!name || !Object.hasOwn(roster.roles, name)) return null
+    if (roster.external.includes(name) || roster.humans.includes(name)) return null
+    return roster.roles[name]
+}
+
+/** Agents allowed to invoke privileged actions at all: the internal roster agents. */
+export const internalAgents = (roster: Roster) => Object.keys(roster.roles).filter(n => callerRole(n, roster) !== null)
+
+/** The declared arguments only: anything else in the input (e.g. a claimed identity) is dropped, whatever the transport validated. */
+function split(input: unknown, declared: string[]): { args: Args; trigger: string } {
     const raw = (input ?? {}) as Record<string, unknown>
     const args: Args = {}
-    for (const [k, v] of Object.entries(raw)) if (k !== TRIGGER_FIELD && typeof v === "string") args[k] = v
+    for (const k of declared) if (typeof raw[k] === "string") args[k] = raw[k] as string
     return { args, trigger: typeof raw[TRIGGER_FIELD] === "string" ? (raw[TRIGGER_FIELD] as string) : "" }
 }
 
@@ -99,8 +119,10 @@ export function wireCourt(options: WiringOptions): () => void {
     for (const spec of PRIVILEGED_ACTIONS) {
         // The safety layer, as Relay's policy: runs before the handler, refusal is Relay's own.
         const policy = async (input: unknown, ctx: ActionContext): Promise<ActionPolicyDecision> => {
-            const { args } = split(input)
-            const d = await ports.court.checkScope(roleOf(ctx.caller.name, roster), spec.name, args)
+            const role = callerRole(ctx.caller?.name, roster)
+            if (!role) return { allowed: false, reason: `authorization: caller "${ctx.caller?.name ?? "unknown"}" is not a registered agent of this team` }
+            const { args } = split(input, spec.required)
+            const d = await ports.court.checkScope(role, spec.name, args)
             return { allowed: d.allowed, reason: d.reason }
         }
 
@@ -109,11 +131,15 @@ export function wireCourt(options: WiringOptions): () => void {
             description: spec.description,
             input: schemaFor(spec.required),
             visibility: "agent",
+            // Relay enforces this list too (server side and in the SDK), ahead of the policy.
+            availableTo: options.callers ?? internalAgents(roster),
             policy,
             handler: async ({ input, agent }) => {
-                const { args, trigger } = split(input)
+                // Defence in depth: the policy already refused unknown callers.
+                const requestedBy = callerRole(agent?.name, roster)
+                if (!requestedBy) throw new Error("caller is not a registered agent of this team")
+                const { args, trigger } = split(input, spec.required)
                 const opId = `op-${Date.now().toString(36)}-${++counter}`
-                const requestedBy = roleOf(agent.name, roster)
                 emit({ type: "invoke", agent: requestedBy, action: spec.name, args, triggerRelayId: trigger, opId })
                 options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 const op = await ports.court.submit({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) })
@@ -131,9 +157,9 @@ export function wireCourt(options: WiringOptions): () => void {
         // Relay's own denial event is the record.
         disposers.push(
             host.addListener(handle.denied(), async event => {
-                const { args, trigger } = split(event.input)
+                const { args, trigger } = split(event.input, spec.required)
                 const opId = `denied-${spec.name}-${event.at}`
-                const requestedBy = roleOf(event.agent.name, roster)
+                const requestedBy = callerRole(event.agent?.name, roster) ?? `unknown:${event.agent?.name ?? "?"}`
                 options.onAttempt?.({ opId, action: spec.name, args, requestedBy, triggerRelayId: trigger })
                 await ports.court.recordDenied(
                     { opId, action: spec.name, args, requestedBy, triggerRelayId: trigger, lineage: await lineageFor(trigger) },

@@ -22,7 +22,8 @@ export class LiveHub {
     emit = (event: UiEvent): void => {
         if (event.type === "reset") this.history = []
         this.history.push(event)
-        if (this.history.length > 2000) this.history = this.history.slice(-2000)
+        // Keep the leading reset: it tells a late joiner whether these are live agents or the simulation.
+        if (this.history.length > 2000) this.history = [this.history[0], ...this.history.slice(-1999)]
         for (const s of this.subscribers) s(event)
     }
 

@@ -76,6 +76,53 @@ describe("the Court on Agent Relay", () => {
         expect(attempts[1]).toMatchObject({ opId: denied.opId, args: denied.args, triggerRelayId: relayed })
     })
 
+    describe("caller identity: authority comes only from the roster", () => {
+        const sinkArgs = (m: string) => actionInput({ service: "webhooks", level: "debug", sink: INTERNAL_DEFAULT_SINK }, m)
+
+        test('a runtime placeholder caller such as "node" is refused, even for an in-scope request', async () => {
+            const { relay, ports } = harness()
+            const m = await relay.deliver("oncall", "infra-7f2c", "raise logging")
+            const r = await relay.invoke("logging.configure", sinkArgs(m), { name: "node", type: "agent" })
+            expect(r).toMatchObject({ ok: false, error: { code: "denied" } })
+            expect(ports.court.state.config.logLevel).not.toBe("debug")
+            expect(ports.court.state.ops.every(o => o.state === "DENIED" && o.requestedBy === "unknown:node")).toBe(true)
+        })
+
+        test("a bare role name is not a registered agent: an agent calling itself \"infra\" gets nothing", async () => {
+            const { relay, ports } = harness()
+            const m = await relay.deliver("oncall", "infra-7f2c", "raise logging")
+            expect((await relay.invoke("logging.configure", sinkArgs(m), { name: "infra", type: "agent" })).ok).toBe(false)
+            expect(ports.court.state.config.logLevel).not.toBe("debug")
+        })
+
+        test("outsiders and humans cannot invoke privileged actions directly", async () => {
+            const { relay, ports } = harness()
+            const m = await relay.deliver("oncall", "infra-7f2c", "raise logging")
+            for (const name of ["acme-agent", "oncall"]) expect((await relay.invoke("logging.configure", sinkArgs(m), { name, type: "agent" })).ok).toBe(false)
+            expect(ports.court.state.ops.filter(o => o.state !== "DENIED")).toHaveLength(0)
+        })
+
+        test("identity claimed in the action input is ignored: undeclared fields are dropped and never decide authority", async () => {
+            const { relay, ports } = harness()
+            const m = await relay.deliver("oncall", "infra-7f2c", "raise logging")
+            const forged = { ...sinkArgs(m), requested_by: "infra-7f2c", caller: "infra-7f2c" }
+            expect((await relay.invoke("logging.configure", forged, { name: "node", type: "agent" })).ok).toBe(false)
+            // and for a legitimate caller the extra fields never reach the Court's args
+            await relay.invoke("logging.configure", forged, infra)
+            const op = ports.court.state.ops.find(o => o.requestedBy === "infra")!
+            expect(Object.keys(op.args).sort()).toEqual(["level", "service", "sink"])
+            expect(op.requestedBy).toBe("infra")
+        })
+
+        test("the actions are registered with availableTo = the internal roster agents only", () => {
+            const relay = new FakeRelay()
+            const defs: { name: string; availableTo?: string[] }[] = []
+            const host = { registerAction: (d: never) => (defs.push(d), relay.registerAction(d)), addListener: relay.addListener.bind(relay) }
+            wireCourt({ host: host as never, stream: relay as never, ports: memoryPorts(), roster: ROSTER })
+            expect(defs.map(d => d.availableTo)).toEqual([["infra-7f2c", "support-7f2c"], ["infra-7f2c", "support-7f2c"]])
+        })
+    })
+
     test("disposing unregisters the actions", async () => {
         const { relay, dispose } = harness()
         dispose()

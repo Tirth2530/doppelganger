@@ -2,7 +2,7 @@
 // message's wording; only one removes its instructions. Comparing the twins
 // they produce isolates the instruction from the wording.
 
-import { runAgent } from "./agents.ts"
+import { runAgent, type AgentResult } from "./agents.ts"
 import type { AgentSpec } from "./scenario.ts"
 
 const rewriter = (system: string): AgentSpec => ({ role: "support", system, tools: [] })
@@ -25,7 +25,9 @@ export const PARAPHRASE = rewriter(
     ].join(" ")
 )
 
-export async function rewrite(op: AgentSpec, text: string): Promise<string> {
+/** One rewrite. An empty answer is an error, not the original text: a silent fallback would turn the twin into the baseline. */
+export async function rewrite(op: AgentSpec, text: string): Promise<{ text: string; usage?: AgentResult["usage"] }> {
     const r = await runAgent(op, [{ role: "user", content: text }])
-    return r.text.trim() || text
+    if (!r.text.trim()) throw new Error("the rewriter returned nothing")
+    return { text: r.text.trim(), usage: r.usage }
 }

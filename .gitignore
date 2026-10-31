@@ -4,3 +4,4 @@ generated/
 .env
 .agentworkforce/
 *.log
+live-eval-results.json

@@ -231,6 +231,8 @@ export interface Evidence {
     rounds: number
     note: string
     certificate: Certificate | null
+    /** What the replay cost, when a real replay ran (absent for the simulation). */
+    replay?: { modelCalls: number; rewriteCalls: number; promptTokens: number; completionTokens: number; ms: number; model?: string }
 }
 
 // ---- the safety layer: the Court -------------------------------------------

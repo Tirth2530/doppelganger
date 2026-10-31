@@ -45,6 +45,7 @@ async function main() {
     }
 
     const review = async (op: Op) => {
+        hub.emit({ type: "narrate", text: `Replaying the agents for ${op.opId}: unchanged, reworded, and with the outside request removed.` })
         const outside = (await ports.lineage.all()).filter(m => op.lineage.externalRelayIds.includes(m.relayId))
         const origin = op.lineage.externalRelayIds[0] ?? ""
         const evidence = await runTrial(
@@ -64,7 +65,8 @@ async function main() {
         hub.emit({ type: "shadow", state: shadow, opId: a.opId })
     }
 
-    wireCourt({ host: agent.court, stream: relay, ports, roster, emit: hub.emit, onReview: op => void review(op), onAttempt: attempt })
+    // Only these two agents may invoke privileged actions at all (Relay's availableTo); scopes then narrow it to Infra.
+    wireCourt({ host: agent.court, stream: relay, ports, roster, callers: [name("support"), name("infra")], emit: hub.emit, onReview: op => void review(op).catch(e => hub.emit({ type: "narrate", text: `Review of ${op.opId} failed; it stays under review for a human: ${String(e)}` })), onAttempt: attempt })
 
     // Each agent answers the messages addressed to it, through the model, and logs the exact context.
     const think = async (spec: AgentSpec, me: Agent, message: RelayMessageEvent<"message.created">["message"]) => {
@@ -137,9 +139,9 @@ async function main() {
     hub.emit({ type: "reset", mode: "live" })
     hub.emit({ type: "court", state: await ports.court.getState() })
     hub.emit({ type: "shadow", state: shadow, opId: null })
-    console.log(`Live run ${runId}: open http://localhost:${server.port}/?mode=live on this laptop`)
-    console.log(`On-call phone link (valid until ${new Date(session.expiresAt).toLocaleTimeString()}):`)
-    for (const url of session.joinUrls(server.port)) console.log(`  ${url}`)
+    // The on-call link carries a credential, so it is never written to the console or logs: the QR code on the dashboard holds it.
+    console.log(`Live run ${runId}: open http://localhost:${server.port}/?mode=live on this laptop.`)
+    console.log(`The on-call QR code is on the dashboard (session valid until ${new Date(session.expiresAt).toLocaleTimeString()}).`)
 }
 
 main().catch(error => {

@@ -176,17 +176,25 @@ code {
     flex-wrap: wrap;
     justify-content: flex-end;
 }
+/* Live vs simulated must be readable from the back of the room. */
 .mode {
     font-family: var(--font-mono);
-    font-size: 11px;
-    padding: 2px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 4px 10px;
     border-radius: 4px;
-    border: 1px solid var(--line);
-    color: var(--ink-3);
+    border: 1px solid color-mix(in srgb, var(--held) 55%, var(--line));
+    color: var(--held);
+    background: color-mix(in srgb, var(--held) 10%, transparent);
 }
 .mode[data-mode="live"] {
     color: var(--good);
-    border-color: color-mix(in srgb, var(--good) 50%, var(--line));
+    border-color: color-mix(in srgb, var(--good) 55%, var(--line));
+    background: color-mix(in srgb, var(--good) 12%, transparent);
+}
+.mode[data-mode="live"]::before {
+    content: "● ";
 }
 .scope {
     font-size: 12.5px;

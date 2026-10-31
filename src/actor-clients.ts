@@ -3,7 +3,8 @@
 
 import type { ActorPorts, AgentLogPort, CourtPort, LineagePort } from "./ports.ts"
 
-const COURT_ID = "webhooks"
+// One Court per deployment. Override to start from a fresh Court instead of resetting a persisted one.
+const COURT_ID = process.env.COURT_ID || "webhooks"
 
 interface Generated {
     actors: {

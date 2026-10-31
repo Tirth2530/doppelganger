@@ -31,7 +31,7 @@ describe("the presenter token never leaves the laptop", () => {
     })
 
     test("a request forwarded by a tunnel (cloudflared, ngrok) does not, even though it arrives from 127.0.0.1", async () => {
-        for (const headers of [
+        for (const headers of <Record<string, string>[]>[
             { "x-forwarded-for": "203.0.113.9" },
             { "cf-connecting-ip": "203.0.113.9" },
             { forwarded: "for=203.0.113.9" },
@@ -108,5 +108,25 @@ describe("session lifecycle", () => {
         for (let i = 0; i < 25; i++) last = s.admit(s.oncallToken, `cmd-rate-${i}-xxxx`, { kind: "restore" }, now)
         expect(last).toMatchObject({ ok: false, status: 429 })
         expect(s.admit(s.oncallToken, "cmd-rate-later-x", { kind: "restore" }, now + 11_000).ok).toBe(true)
+    })
+})
+
+describe("credentials stay out of logs, late joiners learn the mode", () => {
+    test("neither runner prints the on-call link or a token", async () => {
+        for (const f of ["src/live-run.ts", "src/demo-server.ts"]) {
+            const src = await Bun.file(f).text()
+            expect(src).not.toMatch(/console\.(log|info|error)\([^)]*(joinUrls|presenterToken|oncallToken|token)/)
+        }
+    })
+
+    test("the hub keeps the leading reset when it trims history, so a phone joining late still sees live vs simulated", async () => {
+        const { LiveHub } = await import("../src/live.ts")
+        const h = new LiveHub()
+        h.emit({ type: "reset", mode: "simulation" })
+        for (let i = 0; i < 2500; i++) h.emit({ type: "narrate", text: String(i) })
+        const seen: { type: string }[] = []
+        h.subscribe(e => seen.push(e))
+        expect(seen[0]).toEqual({ type: "reset", mode: "simulation" })
+        expect(seen).toHaveLength(2000)
     })
 })
