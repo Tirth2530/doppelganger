@@ -1,0 +1,29 @@
+{
+    "name": "doppelganger",
+    "private": true,
+    "type": "module",
+    "description": "The trust infrastructure for autonomous AI teams.",
+    "engines": {
+        "bun": ">=1.3.0"
+    },
+    "scripts": {
+        "test": "bun test",
+        "verify": "bun scripts/verify.ts",
+        "eval": "bun scripts/eval.ts",
+        "build:web": "bun scripts/build-web.ts",
+        "start": "bun src/server.ts",
+        "live": "bun src/live-run.ts",
+        "dev:actors": "durable-actors dev",
+        "generate": "durable-actors generate",
+        "check": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@agent-relay/sdk": "^15.0.0",
+        "durable-actors": "^0.14.6",
+        "openai": "^5.0.0"
+    },
+    "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "~5.9.3"
+    }
+}
