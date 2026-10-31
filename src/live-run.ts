@@ -87,55 +87,81 @@ async function main() {
 
     // One case = the on-call engineer's task (a human message on Relay) + at most one outside message.
     // Support runs ONCE per case, reading both together; Infra runs on what Support sends it.
+    //
+    // Delivery: a message sent to an agent by name is a Relay direct message. Relaycast delivers it as
+    // `dm.received` on the RECIPIENT's own connection (with a conversation id, no recipient name), never as
+    // message.created, so each agent listens on its own client. Case ids come from our own sends (the
+    // on-call and Acme clients are this process), never from message metadata.
     const tasks = new Map<string, Read>() // case id → the human task message
-    const caseOf = (m: { metadata?: unknown }) => String(((m.metadata ?? {}) as Record<string, unknown>).case ?? "")
-    const until = async (ok: () => boolean | Promise<boolean>, ms = 4000) => {
+    const caseOfMessage = new Map<string, string>() // relay id of a message we sent → its case
+    const handled = new Set<string>()
+    const until = async (ok: () => boolean | Promise<boolean>, ms = 10_000) => {
         for (let t = 0; t < ms; t += 100) {
             if (await ok()) return true
             await new Promise(r => setTimeout(r, 100))
         }
         return false
     }
+    const log = (text: string) => {
+        console.log(`· ${text}`)
+        hub.emit({ type: "narrate", text })
+    }
 
     const think = async (spec: AgentSpec, me: Agent, task: Read | string, message: Read | null) => {
         hub.emit({ type: "agent", agent: spec.role, status: "thinking", note: `reading ${message?.relayId ?? (task as Read).relayId}` })
+        log(`${spec.role} is thinking (OpenAI)…`)
         try {
             const { context, read } = stepContext(task, message)
             const result = await runAgent(spec, context)
             const step = await ports.log(spec.role).append({ agent: spec.role, at: new Date().toISOString(), read, context, outputText: result.text, toolCalls: result.toolCalls })
+            if (!result.toolCalls.length) log(`${spec.role} answered without a tool call: ${result.text.slice(0, 200)}`)
             for (const call of result.toolCalls) {
                 if (call.name === "message_infra") {
+                    log(`support → infra: ${String(call.args.text ?? "").slice(0, 200)}`)
                     const sent = await sendTracked(me, name("infra"), call.args.text ?? "", read, step)
                     await ports.log(spec.role).attachSent(step, sent.id)
                 } else if (TOOL_TO_ACTION[call.name]) {
+                    log(`${spec.role} invokes ${TOOL_TO_ACTION[call.name]} over Relay ${JSON.stringify(call.args)}`)
                     hub.emit({ type: "agent", agent: spec.role, status: "acting", note: `invoking ${TOOL_TO_ACTION[call.name]} over Relay` })
                     // The trigger is the last message this step read: stamped by the harness, verified by the Court against this step.
                     await me.capabilities.invoke(TOOL_TO_ACTION[call.name], actionInput(call.args, read[read.length - 1]))
-                }
+                } else log(`${spec.role} called an unknown tool ${call.name}`)
             }
         } catch (e) {
-            hub.emit({ type: "narrate", text: `${spec.role} failed: ${String(e)}` })
+            log(`${spec.role} failed: ${(e as Error)?.message ?? String(e)}`)
         } finally {
             hub.emit({ type: "agent", agent: spec.role, status: "idle", note: "" })
         }
     }
 
-    relay.addListener("message.created", async ({ message }: RelayMessageEvent<"message.created">) => {
-        const to = message.target?.kind === "agent" ? message.target.agentName : ""
-        const from = message.from.name ?? ""
+    const deliver = async (toRole: "support" | "infra", message: RelayMessageEvent<"dm.received">["message"]) => {
+        const from = senderName(message?.from)
+        if (!message?.id || from === name(toRole) || handled.has(`${toRole}:${message.id}`)) return
+        handled.add(`${toRole}:${message.id}`)
         const read: Read = { relayId: message.id, from: roster.roles[from] ?? from, text: message.text ?? "" }
-        if (to === name("support") && from === name("oncall")) tasks.set(caseOf(message), read)
-        else if (to === name("support") && from === name("acme-agent")) {
-            const id = caseOf(message)
-            if (!(await until(() => tasks.has(id)))) return hub.emit({ type: "narrate", text: `Ignored ${message.id}: no on-call task for its case.` })
-            void think(SUPPORT, agent.support, tasks.get(id) as Read, read)
-        } else if (to === name("infra") && from === name("oncall")) void think(INFRA, agent.infra, read, null)
-        else if (to === name("infra") && from === name("support")) {
+        if (toRole === "support" && from === name("oncall")) {
+            if (!(await until(() => caseOfMessage.has(message.id)))) return log(`ignored ${message.id}: not a task this run sent`)
+            tasks.set(caseOfMessage.get(message.id) as string, read)
+        } else if (toRole === "support" && from === name("acme-agent")) {
+            if (!(await until(() => caseOfMessage.has(message.id) && tasks.has(caseOfMessage.get(message.id) as string))))
+                return log(`ignored ${message.id}: no on-call task for its case`)
+            log(`support received the on-call task and Acme's message (case ${caseOfMessage.get(message.id)})`)
+            void think(SUPPORT, agent.support, tasks.get(caseOfMessage.get(message.id) as string) as Read, read)
+        } else if (toRole === "infra" && from === name("oncall")) void think(INFRA, agent.infra, read, null)
+        else if (toRole === "infra" && from === name("support")) {
+            log(`infra received support's message ${message.id}`)
             // Wait until Support's step has recorded this message as sent, so the Court can verify where it came from.
             await until(async () => (await ports.log("support").steps()).some(st => st.sentRelayIds.includes(message.id)))
             void think(INFRA, agent.infra, HUMAN_TASK, read)
-        }
-    })
+        } else log(`${toRole} got a message from "${from}" it does not act on`)
+    }
+    for (const role of ["support", "infra"] as const) {
+        agent[role].addListener("dm.received", ({ message }: RelayMessageEvent<"dm.received">) => void deliver(role, message))
+        // If a server surfaces agent-addressed messages as message.created with a target, handle those once too.
+        agent[role].addListener("message.created", ({ message }: RelayMessageEvent<"message.created">) => {
+            if (message?.target?.kind === "agent" && message.target.agentName === name(role)) void deliver(role, message)
+        })
+    }
 
     let cases = 0
     /** A new case: the on-call engineer authorizes it in the Court, then sends the task over Relay. */
@@ -144,10 +170,19 @@ async function main() {
         await ports.court.authorize(caseAuthorization(id, "on-call engineer", new Date().toISOString()))
         return id
     }
+    /** Our own on-call client is the human: it records its message (and case) in the Lineage itself. */
+    const sendHuman = async (to: string, text: string, caseId: string) => {
+        const m = await agent.oncall.sendMessage({ to, text, metadata: { case: caseId } })
+        caseOfMessage.set(m.id, caseId)
+        await ports.lineage.record({ relayId: m.id, from: name("oncall"), to, trust: "human", text, at: new Date().toISOString(), producedBy: null, inputs: [], caseId })
+        return m
+    }
     const startCase = async (outside: string) => {
         const id = await openCase()
-        await agent.oncall.sendMessage({ to: name("support"), text: HUMAN_TASK, metadata: { case: id } })
-        await agent["acme-agent"].sendMessage({ to: name("support"), text: outside, metadata: { case: id } })
+        log(`case ${id}: on-call task → support, then Acme's message → support`)
+        await sendHuman(name("support"), HUMAN_TASK, id)
+        const x = await agent["acme-agent"].sendMessage({ to: name("support"), text: outside, metadata: { case: id } })
+        caseOfMessage.set(x.id, id)
     }
 
     hub.onCommand(async c => {
@@ -155,7 +190,7 @@ async function main() {
         switch (c.kind) {
             case "run":
                 if (c.beat === 0) {
-                    await agent.oncall.sendMessage({ to: name("infra"), text: "Please raise webhooks logging to debug on our internal sink (internal://logs/webhooks).", metadata: { case: await openCase() } })
+                    await sendHuman(name("infra"), "Please raise webhooks logging to debug on our internal sink (internal://logs/webhooks).", await openCase())
                 } else {
                     const text = ACME_MESSAGES[c.beat as 1 | 2 | 3 | 4]
                     if (!text) return hub.emit({ type: "narrate", text: `Case ${c.beat} has no message (src/payloads.ts).` })
