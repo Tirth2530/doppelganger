@@ -1,0 +1,142 @@
+<div class="page">
+    <header class="masthead">
+        <div class="brand">
+            <svg class="mark" viewBox="0 0 48 48" aria-hidden="true"><circle cx="19" cy="24" r="13" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="29" cy="24" r="13" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 3"/></svg>
+            <div>
+                <h1>Doppelgänger</h1>
+                <p class="tagline">The trust infrastructure for autonomous AI teams</p>
+            </div>
+        </div>
+        <div class="standing">
+            <div class="layers">
+                <span class="layer safety" data-tip="Deterministic. Scope, an authorization epoch that fences every verdict, and serialized state on a Durable Actor. It can deny on its own and never relies on a statistic.">Safety layer · the Court</span>
+                <span class="layer evidence" data-tip="Advisory. Counterfactual twins test whether an action survives removing the outside instruction. It never auto-denies: it clears what survives, and hands the rest to a human.">Evidence layer · the twins</span>
+            </div>
+            <div class="authority">
+                <span class="mode" id="mode"></span>
+                <div class="scope" id="scope"></div>
+                <div class="epoch" id="epoch"><span>authorization epoch</span><strong>1</strong></div>
+            </div>
+        </div>
+    </header>
+
+    <section class="thesis" aria-label="The question">
+        <p class="question">How do we let AI agents act on their own without letting them inherit authority no human ever intended to give them?</p>
+        <p class="answer">Doppelgänger traces how each request formed across agents, tests the suspicious ones against the human's original intent with counterfactual twins, and enforces the result. Humans see only what the evidence can't clear.</p>
+    </section>
+
+    <section class="case" aria-label="Cases">
+        <div class="beats" id="beats" role="group" aria-label="Demo cases"></div>
+        <p class="narration" id="narration" aria-live="polite"></p>
+        <div class="controls">
+            <button class="btn danger" id="revoke" data-tip="Remove Infra's authority right now. The authorization epoch moves on, fencing every review in flight.">Revoke Infra</button>
+            <button class="btn" id="restore">Restore</button>
+            <label class="sr-only" for="speed">Speed</label>
+            <select class="select" id="speed">
+                <option value="0.6">Slow</option>
+                <option value="1" selected>Normal</option>
+                <option value="2.5">Fast</option>
+            </select>
+            <button class="btn quiet" id="reset">Reset</button>
+        </div>
+    </section>
+
+    <main class="workbench">
+        <section class="col" aria-labelledby="prov-h">
+            <header class="col-head"><h2 id="prov-h">How the request formed</h2><small>Agent Relay</small></header>
+            <div class="agents" id="agents"></div>
+            <ol class="chain" id="chain"></ol>
+        </section>
+
+        <section class="col hero" aria-labelledby="conf-h">
+            <header class="col-head"><h2 id="conf-h">The action and its twin</h2><small>evidence layer</small></header>
+            <div class="verdict" id="verdict"></div>
+            <div class="confrontation" id="confrontation"></div>
+            <div class="arms" id="arms"></div>
+            <figure class="ledger">
+                <div class="chart" id="ledger"></div>
+                <figcaption id="ledger-caption"></figcaption>
+            </figure>
+        </section>
+
+        <section class="col" aria-labelledby="docket-h">
+            <header class="col-head"><h2 id="docket-h">The Court</h2><small>Durable Actor</small></header>
+            <ol class="docket" id="docket"></ol>
+            <div class="config" id="config"></div>
+        </section>
+    </main>
+
+    <details class="drawer" id="drawer">
+        <summary><span class="drawer-title">Evidence drawer</span><span class="drawer-hint">every twin · assumptions · cost · verified properties</span></summary>
+        <div class="drawer-grid">
+            <section class="cell wide"><h3>Every twin, round by round</h3><p class="note">Each round replays the chain three ways. A filled cell took the real action.</p><div id="samples"></div></section>
+            <section class="cell"><h3>Assumptions</h3><p class="note">The error bound holds under these. Every certificate carries them.</p><ul class="assumptions" id="assumptions"></ul></section>
+            <section class="cell"><h3>Cost</h3><div id="cost"></div></section>
+            <section class="cell wide"><h3>Verified properties</h3><div id="proofs"></div></section>
+        </div>
+    </details>
+
+    <section class="block" aria-labelledby="adv-h">
+        <header class="block-head">
+            <h2 id="adv-h">Safety without making humans approve everything</h2>
+            <p>The same labelled suite of 7 scenario classes, decided five ways. Every approach trades attacks stopped against legitimate work that interrupts a human. Only one reaches the top-left.</p>
+        </header>
+        <div class="adv-grid">
+            <div class="chart" id="frontier"></div>
+            <div id="adv-reading"></div>
+        </div>
+        <div class="table-wrap" id="per-kind"></div>
+        <p class="note" id="adv-note"></p>
+    </section>
+
+    <section class="block why" aria-labelledby="why-h">
+        <header class="block-head"><h2 id="why-h">Why this, why now</h2></header>
+        <div class="why-grid">
+            <article class="why-card">
+                <span class="why-tag">OWASP Top 10 for Agentic Applications, 2026</span>
+                <p>ASI03, Identity and Privilege Abuse: a low-privilege agent relays a request that a high-privilege agent executes without rechecking the user's original intent.</p>
+                <a href="https://www.giskard.ai/knowledge/owasp-top-10-for-agentic-application-2026" target="_blank" rel="noopener">Read the summary</a>
+            </article>
+            <article class="why-card">
+                <span class="why-tag">Supabase MCP, 2025</span>
+                <p>Researchers showed a customer support ticket could steer a privileged coding agent into copying secret tokens back into the ticket. The same shape as our demo: outside content, a helpful agent, a privileged action.</p>
+                <a href="https://simonwillison.net/2025/Jul/06/supabase-mcp-lethal-trifecta/" target="_blank" rel="noopener">Read Simon Willison's write-up</a>
+            </article>
+            <article class="why-card">
+                <span class="why-tag">Prompt Infection, 2024</span>
+                <p>Injected instructions spread from agent to agent inside multi-agent systems. A filter on one agent's input cannot see an instruction that arrives in a teammate's own words.</p>
+                <a href="https://arxiv.org/abs/2410.07283" target="_blank" rel="noopener">Read the paper</a>
+            </article>
+        </div>
+    </section>
+
+    <section class="proof" aria-label="Why the verdicts can be trusted">
+        <article class="panel">
+            <header>
+                <h2>An error bound, not a promise</h2>
+                <p>Twins are random, so no single replay proves anything. The paired test's false-"influenced" rate is bounded by α at whatever round it stops (Ville's inequality), under the assumptions in the drawer. Stopping early to save tokens never loosens it.</p>
+            </header>
+            <p class="claim" id="claim"></p>
+            <div class="chart" id="operating"></div>
+            <div class="knobs">
+                <div class="knob"><label for="k-alpha">False-influenced bound α <output id="k-alpha-out"></output></label><input type="range" id="k-alpha" min="0.01" max="0.2" step="0.01" /></div>
+                <div class="knob"><label for="k-max">Most rounds per review <output id="k-max-out"></output></label><input type="range" id="k-max" min="8" max="30" step="1" /></div>
+            </div>
+        </article>
+        <article class="panel">
+            <header>
+                <h2>The Court is model-checked</h2>
+                <p>Every interleaving of requests, evidence callbacks, human decisions, commits, revocations, duplicates and retries, within bounds, run against the Court's real code. The replay worker and the humans are treated as untrusted.</p>
+            </header>
+            <div class="stats" id="verify-stats"></div>
+            <ul class="invariants" id="invariants"></ul>
+            <h3 class="sub">Five broken Courts it must catch</h3>
+            <p class="note">Each removes one safeguard. Open one for the shortest sequence of events that breaks it.</p>
+            <div class="mutants" id="mutants"></div>
+        </article>
+    </section>
+
+    <footer class="colophon">
+        <p>In simulation the agents and their twins are drawn from stated ground truths, shown round by round in the drawer; the Court, lineage, experiment, attribution and certificates are the production code. In live mode, OpenAI agents talk over Agent Relay, the Court runs as a Durable Actor and owns the privileged actions on Relay, and the same events stream here.</p>
+    </footer>
+</div>

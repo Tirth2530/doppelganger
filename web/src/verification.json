@@ -1,0 +1,657 @@
+{
+  "generatedAt": "2026-10-31T18:47:48.552Z",
+  "invariants": [
+    {
+      "id": "authority",
+      "name": "Executes only under current authority",
+      "statement": "An operation reaches EXECUTED only if Infra holds authority for it at that moment and no revocation happened since it was approved."
+    },
+    {
+      "id": "revocation",
+      "name": "Revocation stops reviews in flight",
+      "statement": "Evidence never approves an operation if Infra's authority was revoked while its review was running."
+    },
+    {
+      "id": "laundering",
+      "name": "Laundered requests are always reviewed",
+      "statement": "An operation whose history reaches outside content is approved only by evidence or a human, never on submission."
+    },
+    {
+      "id": "transitions",
+      "name": "Only legal state transitions",
+      "statement": "Every change follows the lifecycle; HELD leaves only by a human decision; EXECUTED and DENIED never change."
+    },
+    {
+      "id": "config",
+      "name": "Config is exactly what was executed",
+      "statement": "The protected config always equals the default with each executed operation applied in order, and nothing else."
+    },
+    {
+      "id": "once",
+      "name": "Each operation executes at most once",
+      "statement": "No operation is applied to the protected config twice, however many commits arrive."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "all-interleaved",
+      "title": "All three operations, every interleaving",
+      "ops": [
+        "A",
+        "B",
+        "C"
+      ],
+      "limits": {
+        "submits": 1,
+        "verdicts": 1,
+        "humans": 1,
+        "commits": 1,
+        "revokes": 1,
+        "restores": 1
+      }
+    },
+    {
+      "id": "laundered-retries",
+      "title": "The laundered request with duplicates and retries",
+      "ops": [
+        "A"
+      ],
+      "limits": {
+        "submits": 2,
+        "verdicts": 2,
+        "humans": 2,
+        "commits": 2,
+        "revokes": 1,
+        "restores": 1
+      }
+    },
+    {
+      "id": "revocation-race",
+      "title": "Two requests racing two revocations",
+      "ops": [
+        "A",
+        "B"
+      ],
+      "limits": {
+        "submits": 1,
+        "verdicts": 2,
+        "humans": 1,
+        "commits": 2,
+        "revokes": 2,
+        "restores": 2
+      }
+    }
+  ],
+  "reports": [
+    {
+      "impl": "court",
+      "title": "Doppelgänger Court",
+      "description": "The Court as shipped: full lineage, epoch fencing at verdict and at commit, state guards on every transition, serialized by its Durable Actor.",
+      "mutant": false,
+      "states": 48588,
+      "transitions": 730026,
+      "depth": 10,
+      "ms": 3540,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 24381,
+          "transitions": 386522,
+          "depth": 9,
+          "ms": 1856,
+          "broken": []
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 129,
+          "transitions": 1185,
+          "depth": 6,
+          "ms": 4,
+          "broken": []
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 24078,
+          "transitions": 342319,
+          "depth": 10,
+          "ms": 1680,
+          "broken": []
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": true
+        },
+        {
+          "id": "revocation",
+          "held": true
+        },
+        {
+          "id": "laundering",
+          "held": true
+        },
+        {
+          "id": "transitions",
+          "held": true
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": true
+        }
+      ],
+      "counterexamples": []
+    },
+    {
+      "impl": "last-hop",
+      "title": "Trust the last hop",
+      "description": "Checks only who sent the triggering message. A request relayed by a trusted teammate looks clean.",
+      "mutant": true,
+      "states": 832,
+      "transitions": 12950,
+      "depth": 7,
+      "ms": 65,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 327,
+          "transitions": 6099,
+          "depth": 6,
+          "ms": 35,
+          "broken": [
+            "laundering"
+          ]
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 8,
+          "transitions": 37,
+          "depth": 3,
+          "ms": 0,
+          "broken": [
+            "laundering"
+          ]
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 497,
+          "transitions": 6814,
+          "depth": 7,
+          "ms": 30,
+          "broken": [
+            "laundering"
+          ]
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": true
+        },
+        {
+          "id": "revocation",
+          "held": true
+        },
+        {
+          "id": "laundering",
+          "held": false
+        },
+        {
+          "id": "transitions",
+          "held": true
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": true
+        }
+      ],
+      "counterexamples": [
+        {
+          "invariant": "laundering",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests A (laundered logging change)",
+              "result": "A: new → APPROVED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "impl": "no-commit-fence",
+      "title": "No fence at commit",
+      "description": "Applies an approved operation without checking that authorization is unchanged since the approval.",
+      "mutant": true,
+      "states": 579704,
+      "transitions": 8299855,
+      "depth": 12,
+      "ms": 40160,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 279013,
+          "transitions": 4328812,
+          "depth": 10,
+          "ms": 21396,
+          "broken": [
+            "authority"
+          ]
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 506,
+          "transitions": 4517,
+          "depth": 7,
+          "ms": 21,
+          "broken": [
+            "authority"
+          ]
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 300185,
+          "transitions": 3966526,
+          "depth": 12,
+          "ms": 18743,
+          "broken": [
+            "authority"
+          ]
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": false
+        },
+        {
+          "id": "revocation",
+          "held": true
+        },
+        {
+          "id": "laundering",
+          "held": true
+        },
+        {
+          "id": "transitions",
+          "held": true
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": true
+        }
+      ],
+      "counterexamples": [
+        {
+          "invariant": "authority",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests B (clean logging change)",
+              "result": "B: new → APPROVED"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "revokes Infra's authority",
+              "result": "authorization epoch 1 → 2"
+            },
+            {
+              "actor": "Court",
+              "event": "commits B",
+              "result": "B: APPROVED → EXECUTED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "impl": "trust-worker-epoch",
+      "title": "Trust the worker's epoch",
+      "description": "Fences verdicts with the epoch the replay worker reports instead of the one the Court stamped at submission.",
+      "mutant": true,
+      "states": 1229204,
+      "transitions": 12086540,
+      "depth": 13,
+      "ms": 64972,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 338226,
+          "transitions": 3534730,
+          "depth": 11,
+          "ms": 19775,
+          "broken": [
+            "revocation"
+          ]
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 305,
+          "transitions": 2228,
+          "depth": 7,
+          "ms": 10,
+          "broken": [
+            "revocation"
+          ]
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 890673,
+          "transitions": 8549582,
+          "depth": 13,
+          "ms": 45187,
+          "broken": [
+            "revocation"
+          ]
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": true
+        },
+        {
+          "id": "revocation",
+          "held": false
+        },
+        {
+          "id": "laundering",
+          "held": true
+        },
+        {
+          "id": "transitions",
+          "held": true
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": true
+        }
+      ],
+      "counterexamples": [
+        {
+          "invariant": "revocation",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests A (laundered logging change)",
+              "result": "A: new → UNDER_REVIEW"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "revokes Infra's authority",
+              "result": "authorization epoch 1 → 2"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "restores Infra's authority",
+              "result": "authorization epoch 2 → 3"
+            },
+            {
+              "actor": "Replay worker",
+              "event": "reports A robust, claiming the current epoch",
+              "result": "A: UNDER_REVIEW → APPROVED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "impl": "interleaved",
+      "title": "Unserialized verdict (@Interleave)",
+      "description": "The verdict handler checks the epoch, awaits, then writes. Another call can run in between, as @Interleave allows.",
+      "mutant": true,
+      "states": 85084,
+      "transitions": 1183831,
+      "depth": 12,
+      "ms": 5720,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 28778,
+          "transitions": 469095,
+          "depth": 10,
+          "ms": 2200,
+          "broken": [
+            "revocation"
+          ]
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 294,
+          "transitions": 2248,
+          "depth": 8,
+          "ms": 12,
+          "broken": [
+            "revocation"
+          ]
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 56012,
+          "transitions": 712488,
+          "depth": 12,
+          "ms": 3508,
+          "broken": [
+            "revocation"
+          ]
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": true
+        },
+        {
+          "id": "revocation",
+          "held": false
+        },
+        {
+          "id": "laundering",
+          "held": true
+        },
+        {
+          "id": "transitions",
+          "held": true
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": true
+        }
+      ],
+      "counterexamples": [
+        {
+          "invariant": "revocation",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests A (laundered logging change)",
+              "result": "A: new → UNDER_REVIEW"
+            },
+            {
+              "actor": "Replay worker",
+              "event": "reports A robust (checked, then awaiting)",
+              "result": "no change"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "revokes Infra's authority",
+              "result": "authorization epoch 1 → 2"
+            },
+            {
+              "actor": "Replay worker",
+              "event": "finishes writing the verdict for A",
+              "result": "A: UNDER_REVIEW → APPROVED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "impl": "no-state-guard",
+      "title": "No state guard on callbacks",
+      "description": "Verdict, human and commit handlers act on an operation whatever state it is in.",
+      "mutant": true,
+      "states": 89347,
+      "transitions": 1223421,
+      "depth": 11,
+      "ms": 5777,
+      "scenarios": [
+        {
+          "scenario": "all-interleaved",
+          "states": 39361,
+          "transitions": 585490,
+          "depth": 10,
+          "ms": 2897,
+          "broken": [
+            "transitions",
+            "authority"
+          ]
+        },
+        {
+          "scenario": "laundered-retries",
+          "states": 174,
+          "transitions": 1479,
+          "depth": 7,
+          "ms": 11,
+          "broken": [
+            "transitions",
+            "once",
+            "authority"
+          ]
+        },
+        {
+          "scenario": "revocation-race",
+          "states": 49812,
+          "transitions": 636452,
+          "depth": 11,
+          "ms": 2869,
+          "broken": [
+            "transitions",
+            "once",
+            "authority"
+          ]
+        }
+      ],
+      "invariants": [
+        {
+          "id": "authority",
+          "held": false
+        },
+        {
+          "id": "revocation",
+          "held": true
+        },
+        {
+          "id": "laundering",
+          "held": true
+        },
+        {
+          "id": "transitions",
+          "held": false
+        },
+        {
+          "id": "config",
+          "held": true
+        },
+        {
+          "id": "once",
+          "held": false
+        }
+      ],
+      "counterexamples": [
+        {
+          "invariant": "transitions",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests A (laundered logging change)",
+              "result": "A: new → UNDER_REVIEW"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "approves A",
+              "result": "A: UNDER_REVIEW → APPROVED"
+            }
+          ]
+        },
+        {
+          "invariant": "once",
+          "scenario": "revocation-race",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests B (clean logging change)",
+              "result": "B: new → APPROVED"
+            },
+            {
+              "actor": "Court",
+              "event": "commits B",
+              "result": "B: APPROVED → EXECUTED"
+            },
+            {
+              "actor": "Court",
+              "event": "commits B",
+              "result": "B: EXECUTED → EXECUTED"
+            }
+          ]
+        },
+        {
+          "invariant": "authority",
+          "scenario": "all-interleaved",
+          "steps": [
+            {
+              "actor": "Infra",
+              "event": "requests B (clean logging change)",
+              "result": "B: new → APPROVED"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "revokes Infra's authority",
+              "result": "authorization epoch 1 → 2"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "restores Infra's authority",
+              "result": "authorization epoch 2 → 3"
+            },
+            {
+              "actor": "On-call engineer",
+              "event": "approves B",
+              "result": "no change"
+            },
+            {
+              "actor": "Court",
+              "event": "commits B",
+              "result": "B: APPROVED → EXECUTED"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
