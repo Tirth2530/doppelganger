@@ -8,7 +8,7 @@ import type { CourtState, MessageRecord, StepRecord } from "./types.ts"
 const now = () => new Date().toISOString()
 
 export function memoryCourt(): CourtPort & { state: CourtState } {
-    const port = {
+    const port: CourtPort & { state: CourtState } = {
         state: court.initialState(),
         async getState() {
             return port.state
@@ -53,7 +53,7 @@ export function memoryCourt(): CourtPort & { state: CourtState } {
             port.state = { ...court.initialState(), epoch: port.state.epoch + 1 }
             return port.state
         }
-    } satisfies CourtPort & { state: CourtState }
+    }
     return port
 }
 

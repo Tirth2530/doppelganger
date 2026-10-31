@@ -434,7 +434,7 @@ export function check(impl: Impl, scenario: Scenario): { report: ScenarioReport;
         push(last.act, last.changes)
         let k: string | null = key
         while (k) {
-            const p = parents.get(k)!
+            const p: { parent: string | null; act: Act | null; changes: string[] } = parents.get(k)!
             if (p.act) push(p.act, p.changes)
             k = p.parent
         }

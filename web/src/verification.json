@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T18:47:48.552Z",
+  "generatedAt": "2026-10-31T18:54:29.987Z",
   "invariants": [
     {
       "id": "authority",
@@ -91,14 +91,14 @@
       "states": 48588,
       "transitions": 730026,
       "depth": 10,
-      "ms": 3540,
+      "ms": 3067,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 24381,
           "transitions": 386522,
           "depth": 9,
-          "ms": 1856,
+          "ms": 1705,
           "broken": []
         },
         {
@@ -106,7 +106,7 @@
           "states": 129,
           "transitions": 1185,
           "depth": 6,
-          "ms": 4,
+          "ms": 5,
           "broken": []
         },
         {
@@ -114,7 +114,7 @@
           "states": 24078,
           "transitions": 342319,
           "depth": 10,
-          "ms": 1680,
+          "ms": 1357,
           "broken": []
         }
       ],
@@ -154,14 +154,14 @@
       "states": 832,
       "transitions": 12950,
       "depth": 7,
-      "ms": 65,
+      "ms": 46,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 327,
           "transitions": 6099,
           "depth": 6,
-          "ms": 35,
+          "ms": 25,
           "broken": [
             "laundering"
           ]
@@ -181,7 +181,7 @@
           "states": 497,
           "transitions": 6814,
           "depth": 7,
-          "ms": 30,
+          "ms": 21,
           "broken": [
             "laundering"
           ]
@@ -235,14 +235,14 @@
       "states": 579704,
       "transitions": 8299855,
       "depth": 12,
-      "ms": 40160,
+      "ms": 39672,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 279013,
           "transitions": 4328812,
           "depth": 10,
-          "ms": 21396,
+          "ms": 22407,
           "broken": [
             "authority"
           ]
@@ -252,7 +252,7 @@
           "states": 506,
           "transitions": 4517,
           "depth": 7,
-          "ms": 21,
+          "ms": 17,
           "broken": [
             "authority"
           ]
@@ -262,7 +262,7 @@
           "states": 300185,
           "transitions": 3966526,
           "depth": 12,
-          "ms": 18743,
+          "ms": 17248,
           "broken": [
             "authority"
           ]
@@ -326,14 +326,14 @@
       "states": 1229204,
       "transitions": 12086540,
       "depth": 13,
-      "ms": 64972,
+      "ms": 64582,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 338226,
           "transitions": 3534730,
           "depth": 11,
-          "ms": 19775,
+          "ms": 20803,
           "broken": [
             "revocation"
           ]
@@ -343,7 +343,7 @@
           "states": 305,
           "transitions": 2228,
           "depth": 7,
-          "ms": 10,
+          "ms": 7,
           "broken": [
             "revocation"
           ]
@@ -353,7 +353,7 @@
           "states": 890673,
           "transitions": 8549582,
           "depth": 13,
-          "ms": 45187,
+          "ms": 43772,
           "broken": [
             "revocation"
           ]
@@ -422,14 +422,14 @@
       "states": 85084,
       "transitions": 1183831,
       "depth": 12,
-      "ms": 5720,
+      "ms": 5105,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 28778,
           "transitions": 469095,
           "depth": 10,
-          "ms": 2200,
+          "ms": 2128,
           "broken": [
             "revocation"
           ]
@@ -439,7 +439,7 @@
           "states": 294,
           "transitions": 2248,
           "depth": 8,
-          "ms": 12,
+          "ms": 8,
           "broken": [
             "revocation"
           ]
@@ -449,7 +449,7 @@
           "states": 56012,
           "transitions": 712488,
           "depth": 12,
-          "ms": 3508,
+          "ms": 2969,
           "broken": [
             "revocation"
           ]
@@ -518,14 +518,14 @@
       "states": 89347,
       "transitions": 1223421,
       "depth": 11,
-      "ms": 5777,
+      "ms": 5272,
       "scenarios": [
         {
           "scenario": "all-interleaved",
           "states": 39361,
           "transitions": 585490,
           "depth": 10,
-          "ms": 2897,
+          "ms": 2684,
           "broken": [
             "transitions",
             "authority"
@@ -536,7 +536,7 @@
           "states": 174,
           "transitions": 1479,
           "depth": 7,
-          "ms": 11,
+          "ms": 5,
           "broken": [
             "transitions",
             "once",
@@ -548,7 +548,7 @@
           "states": 49812,
           "transitions": 636452,
           "depth": 11,
-          "ms": 2869,
+          "ms": 2583,
           "broken": [
             "transitions",
             "once",
